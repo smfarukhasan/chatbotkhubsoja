@@ -7,6 +7,7 @@ export type CurrentAccount = {
   role: MembershipRole;
   token_balance: number;
   monthly_token_credit: number;
+  profile_image_url: string | null;
 };
 
 export type TeamMember = {

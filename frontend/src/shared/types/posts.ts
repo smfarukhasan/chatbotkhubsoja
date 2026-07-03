@@ -21,6 +21,7 @@ export type SocialPost = {
   external_post_id: string | null;
   is_llm_generated: boolean;
   requires_approval: boolean;
+  ai_auto_reply_enabled: boolean;
   scheduled_for: string | null;
   published_at: string | null;
   approved_at: string | null;

@@ -62,3 +62,7 @@ export async function updateAdmin(userId: number, payload: UpdateAdminPayload): 
 export async function deleteAdmin(userId: number): Promise<void> {
   await apiClient.delete(`/users/admins/${userId}`);
 }
+
+export async function resetUserPassword(userId: number): Promise<void> {
+  await apiClient.post(`/users/${userId}/reset-password`);
+}

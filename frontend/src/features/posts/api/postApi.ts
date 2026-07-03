@@ -1,7 +1,12 @@
 import { apiClient } from "../../../lib/api/client";
 import type { PostStatus, SocialPost, SocialPostListResponse } from "../../../shared/types/posts";
 
-export async function listPosts(params?: { status?: PostStatus | ""; page?: number; page_size?: number }): Promise<SocialPostListResponse> {
+export async function listPosts(params?: {
+  status?: PostStatus | "";
+  platform_connection_id?: number;
+  page?: number;
+  page_size?: number;
+}): Promise<SocialPostListResponse> {
   const response = await apiClient.get<SocialPostListResponse>("/posts", { params });
   return response.data;
 }
@@ -42,5 +47,10 @@ export async function schedulePost(postId: number, scheduledFor: string): Promis
 
 export async function publishPostNow(postId: number): Promise<SocialPost> {
   const response = await apiClient.post<SocialPost>(`/posts/${postId}/publish-now`);
+  return response.data;
+}
+
+export async function togglePostAiAutoReply(postId: number, enabled: boolean): Promise<SocialPost> {
+  const response = await apiClient.patch<SocialPost>(`/posts/${postId}/ai-auto-reply`, { ai_auto_reply_enabled: enabled });
   return response.data;
 }

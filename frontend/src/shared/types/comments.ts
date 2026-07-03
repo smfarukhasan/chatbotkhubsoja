@@ -63,3 +63,27 @@ export type FacebookCommentListResponse = {
   page: number;
   page_size: number;
 };
+
+export type FacebookCommentPostSummary = {
+  post_external_id: string;
+  platform_connection_id: number | null;
+  post_title: string | null;
+  post_url: string | null;
+  post_content: string | null;
+  media_urls: string[];
+  comment_count: number;
+  pending_count: number;
+  latest_comment_at: string | null;
+  latest_comment_preview: string | null;
+};
+
+export type FacebookCommentPostDetail = FacebookCommentPostSummary & {
+  comments: FacebookCommentSummary[];
+};
+
+export type FacebookCommentPostListResponse = {
+  items: FacebookCommentPostSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+};

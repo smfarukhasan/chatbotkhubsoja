@@ -1,10 +1,15 @@
 import { apiClient } from "../../../lib/api/client";
 import type {
+  AiChatMode,
   ConversationDetail,
+  ConversationAiChatState,
   ConversationListResponse,
   ConversationStatus,
   ConversationSummary,
   InboxMessage,
+  LiveFacebookConversationListResponse,
+  LiveFacebookMessage,
+  LiveFacebookMessageListResponse,
   MessageListResponse,
   SenderType,
 } from "../../../shared/types/inbox";
@@ -55,10 +60,68 @@ export async function updateConversationStatus(
   return response.data;
 }
 
+export async function updateConversationAiChat(
+  conversationId: number,
+  payload: { mode: AiChatMode; manual_minutes?: number },
+): Promise<ConversationAiChatState> {
+  const response = await apiClient.patch<ConversationAiChatState>(`/inbox/conversations/${conversationId}/ai-chat`, payload);
+  return response.data;
+}
+
 export async function sendReply(
   conversationId: number,
   payload: { content: string; sender_type: Extract<SenderType, "human_admin" | "llm_bot"> },
 ): Promise<InboxMessage> {
   const response = await apiClient.post<InboxMessage>(`/inbox/conversations/${conversationId}/reply`, payload);
+  return response.data;
+}
+
+export async function listLiveFacebookConversations(params?: {
+  connection_id?: number;
+  page_size?: number;
+  after?: string;
+}): Promise<LiveFacebookConversationListResponse> {
+  const response = await apiClient.get<LiveFacebookConversationListResponse>("/inbox/facebook/live/conversations", { params });
+  return response.data;
+}
+
+export async function listLiveFacebookMessages(
+  conversationId: string,
+  params: {
+    connection_id: number;
+    page_size?: number;
+    after?: string;
+  },
+): Promise<LiveFacebookMessageListResponse> {
+  const response = await apiClient.get<LiveFacebookMessageListResponse>(
+    `/inbox/facebook/live/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { params },
+  );
+  return response.data;
+}
+
+export async function sendLiveFacebookReply(payload: {
+  connection_id: number;
+  recipient_id: string;
+  content: string;
+}): Promise<LiveFacebookMessage> {
+  const response = await apiClient.post<LiveFacebookMessage>("/inbox/facebook/live/reply", payload);
+  return response.data;
+}
+
+export async function updateLiveFacebookConversationAiChat(
+  conversationId: string,
+  payload: {
+    connection_id: number;
+    customer_external_id: string;
+    customer_name?: string | null;
+    mode: AiChatMode;
+    manual_minutes?: number;
+  },
+): Promise<ConversationAiChatState> {
+  const response = await apiClient.patch<ConversationAiChatState>(
+    `/inbox/facebook/live/conversations/${encodeURIComponent(conversationId)}/ai-chat`,
+    payload,
+  );
   return response.data;
 }

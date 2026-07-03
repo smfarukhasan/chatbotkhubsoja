@@ -127,6 +127,12 @@
   .comment-original-card {
     max-width: 100%;
   }
+
+  .facebook-live-inbox-page .message-bubble.inbound,
+  .facebook-live-inbox-page .message-bubble.outbound {
+    margin-left: 0;
+    margin-right: 0;
+  }
 }
 
 @media (max-width: 720px) {

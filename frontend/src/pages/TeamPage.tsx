@@ -11,6 +11,7 @@ import {
   listManagedUsers,
   updateAdmin,
   updateSuperAdmin,
+  resetUserPassword,
 } from "../features/users/api/userApi";
 import type { ManagedUser } from "../shared/types/account";
 import type { UserStatus } from "../shared/types/auth";
@@ -134,6 +135,24 @@ export function TeamPage() {
       .finally(() => {
         setLoading(false);
       });
+  };
+
+  const handleResetPassword = async (memberId: number, email: string) => {
+    const ok = window.confirm(`Are you sure you want to reset password for ${email} to "87654321"?`);
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      await resetUserPassword(memberId);
+      setMessage(`Password for ${email} has been successfully reset to "87654321".`);
+      setTimeout(() => setMessage(null), 5000);
+      await loadMembers();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || "Failed to reset password.");
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -443,7 +462,7 @@ export function TeamPage() {
             <article key={member.id} className="panel user-card">
               <div className="user-card-head">
                 <h4>{member.full_name || "Unspecified"}</h4>
-                <div className="user-card-head-actions">
+                 <div className="user-card-head-actions">
                   <span className={`status-pill status-${member.status}`}>{member.status}</span>
                   {(member.user_role === "superAdmin" && canManageSuperAdmins) || (member.user_role === "admin" && canManageAdmins) ? (
                     <button
@@ -464,29 +483,45 @@ export function TeamPage() {
 
               <dl className="user-card-meta">
                 <div>
-                  <dt>Email</dt>
+                  <dt>Email:</dt>
                   <dd>{member.email}</dd>
                 </div>
                 <div>
-                  <dt>User role</dt>
+                  <dt>User role:</dt>
                   <dd>{member.user_role}</dd>
                 </div>
                 <div>
-                  <dt>Workspace</dt>
+                  <dt>Workspace:</dt>
                   <dd>{member.account_name || "-"}</dd>
                 </div>
                 <div>
-                  <dt>Role</dt>
+                  <dt>Role:</dt>
                   <dd>{member.user_role === "superAdmin" ? "owner" : "admin"}</dd>
+                </div>
+                <div>
+                  <dt>Status:</dt>
+                  <dd>{member.status}</dd>
+                </div>
+                <div>
+                  <dt>Password:</dt>
+                  <dd>
+                    {(member.user_role === "superAdmin" && canManageSuperAdmins) || (member.user_role === "admin" && canManageAdmins) ? (
+                      <button
+                        type="button"
+                        className="link-button warning-link"
+                        onClick={() => handleResetPassword(member.id, member.email)}
+                        style={{ fontSize: "14px", color: "#e67e22", cursor: "pointer", background: "none", border: "none", padding: 0, textDecoration: "underline", fontWeight: "normal" }}
+                      >
+                        Reset
+                      </button>
+                    ) : (
+                      "-"
+                    )}
+                  </dd>
                 </div>
               </dl>
 
               <div className="user-card-controls">
-                <label>
-                  Status:
-                  <p className="user-card-permissions">{member.status}</p>
-                </label>
-
                 <label>
                   Permissions:
                   <p className="user-card-permissions">

@@ -1,52 +1,53 @@
 services:
   backend:
     build:
-      context: ./backend
+      context: ./backend_js
       target: development
     container_name: automation-backend
     env_file:
-      - ./backend/.env
+      - ./backend_js/.env
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - ./backend_js:/app
+      - /app/node_modules
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_started
 
-  worker:
-    build:
-      context: ./backend
-      target: development
-    container_name: automation-worker
-    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --queues=default,webhooks,sync,maintenance,messages,comments,posts
-    env_file:
-      - ./backend/.env
-    volumes:
-      - ./backend:/app
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_started
+  # worker:
+  #   build:
+  #     context: ./backend_js
+  #     target: development
+  #   container_name: automation-worker
+  #   command: npm run dev
+  #   env_file:
+  #     - ./backend_js/.env
+  #   volumes:
+  #     - ./backend_js:/app
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_started
 
-  beat:
-    build:
-      context: ./backend
-      target: development
-    container_name: automation-beat
-    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
-    env_file:
-      - ./backend/.env
-    volumes:
-      - ./backend:/app
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_started
+  # beat:
+  #   build:
+  #     context: ./backend_js
+  #     target: development
+  #   container_name: automation-beat
+  #   command: npm run dev
+  #   env_file:
+  #     - ./backend_js/.env
+  #   volumes:
+  #     - ./backend_js:/app
+  #   depends_on:
+  #     mysql:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_started
 
   frontend:
     build:

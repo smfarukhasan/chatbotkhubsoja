@@ -490,6 +490,32 @@ td .custom-multi-select {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.ai-toggle-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ai-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ai-toggle-btn.enabled {
+  background: rgba(126, 240, 193, 0.15);
+  border-color: rgba(126, 240, 193, 0.3);
+  color: #7ef0c1;
+}
+
+.ai-toggle-btn.enabled:hover {
+  background: rgba(126, 240, 193, 0.2);
+}
+
 .status-connected,
 .status-open,
 .status-resolved,

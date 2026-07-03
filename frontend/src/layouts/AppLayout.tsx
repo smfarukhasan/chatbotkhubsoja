@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import { AvatarCropDialog } from "../components/common/AvatarCropDialog";
 import { CustomSelect } from "../components/common/CustomSelect";
 import { useAuthStore } from "../features/auth/store/authStore";
 import { logout } from "../features/auth/api/authApi";
+import { getCurrentAccount, updateCurrentAccountProfile } from "../features/accounts/api/accountApi";
+import { useFacebookPageScope } from "../features/platformConnections/hooks/useFacebookPageScope";
 import { getBillingSummary } from "../features/reports/api/reportApi";
 import { useResponsiveTables } from "../hooks/useResponsiveTables";
+import type { CurrentAccount } from "../shared/types/account";
 
 type NavItem = {
   to: string;
@@ -68,49 +72,51 @@ export function AppLayout() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const activeAccountId = useAuthStore((state) => state.activeAccountId);
-  const setActiveAccountId = useAuthStore((state) => state.setActiveAccountId);
   const clear = useAuthStore((state) => state.clear);
   const refreshToken = useAuthStore((state) => state.refreshToken);
+  const {
+    connections: facebookConnections,
+    loadingConnections: loadingFacebookConnections,
+    activeFacebookConnectionId,
+    activeConnection: activeFacebookConnection,
+    hasMultipleConnections: hasMultipleFacebookConnections,
+    setActiveFacebookConnectionId,
+  } = useFacebookPageScope();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [usedTokenPercent, setUsedTokenPercent] = useState<number | null>(null);
+  const [currentAccount, setCurrentAccount] = useState<CurrentAccount | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [savingProfileImage, setSavingProfileImage] = useState(false);
+  const profileHoldTimerRef = useRef<number | null>(null);
+  const profileLongPressTriggeredRef = useRef(false);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   useResponsiveTables(location.pathname);
 
-  const activeMemberships = useMemo(
-    () => (user?.memberships ?? []).filter((membership) => membership.status === "active"),
-    [user],
-  );
-
-  const activeWorkspace = useMemo(
-    () => activeMemberships.find((membership) => membership.account_id === activeAccountId) ?? activeMemberships[0] ?? null,
-    [activeAccountId, activeMemberships],
-  );
-
-  const workspaceOptions = useMemo(
-    () =>
-      activeMemberships.map((membership) => ({
-        value: String(membership.account_id),
-        label: membership.account_name,
-        helper: `${membership.role} access`,
-      })),
-    [activeMemberships],
-  );
-
   const visibleSections = useMemo(() => {
-    if (!user || user.user_role !== "superAdmin") {
+    if (!user) {
       return NAV_SECTIONS;
     }
 
-    const selectedFeatures = new Set(
-      (user.permissions ?? []).filter((permission) => permission.startsWith("feature:")),
-    );
-    const hasFeatureSelection = selectedFeatures.size > 0;
+    const isOwnerOrSuper = user.user_role === "owner" || user.user_role === "superAdmin";
 
     return NAV_SECTIONS.map((section) => ({
       ...section,
       items: section.items.filter((item) => {
+        if (item.to === "/team" && !isOwnerOrSuper) {
+          return false;
+        }
+        if (user.user_role === "owner") {
+          return true;
+        }
         if (!item.featurePermission) {
           return true;
         }
+        const selectedFeatures = new Set(
+          (user.permissions ?? []).filter((permission) => permission.startsWith("feature:")),
+        );
+        const hasFeatureSelection = selectedFeatures.size > 0;
         if (!hasFeatureSelection) {
           return true;
         }
@@ -138,9 +144,74 @@ export function AppLayout() {
     return currentPage?.label ?? "Workspace";
   }, [currentPage]);
 
+  const activeMembership = useMemo(
+    () =>
+      user?.memberships.find(
+        (membership) => membership.account_id === activeAccountId && membership.status === "active",
+      ) ?? user?.memberships.find((membership) => membership.status === "active") ?? null,
+    [activeAccountId, user?.memberships],
+  );
+
+  const businessName = currentAccount?.name || activeMembership?.account_name || "Workspace";
+
+  const avatarFallback = useMemo(() => {
+    const parts = businessName
+      .split(/\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .slice(0, 2);
+    if (parts.length === 0) return "SC";
+    return parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
+  }, [businessName]);
+
+  const showsFacebookPageSelector = useMemo(
+    () =>
+      ["/comments", "/posts", "/inbox/facebook"].some(
+        (prefix) => location.pathname === prefix || location.pathname.startsWith(`${prefix}/`),
+      ),
+    [location.pathname],
+  );
+
+  const facebookPageOptions = useMemo(
+    () =>
+      facebookConnections.map((connection) => ({
+        value: String(connection.id),
+        label: connection.name,
+        helper: connection.external_name || connection.external_id || undefined,
+      })),
+    [facebookConnections],
+  );
+
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCurrentAccount() {
+      if (!activeAccountId) {
+        setCurrentAccount(null);
+        return;
+      }
+
+      try {
+        const account = await getCurrentAccount();
+        if (!cancelled) {
+          setCurrentAccount(account);
+        }
+      } catch {
+        if (!cancelled) {
+          setCurrentAccount(null);
+        }
+      }
+    }
+
+    void loadCurrentAccount();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAccountId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,6 +244,26 @@ export function AppLayout() {
     };
   }, [activeAccountId]);
 
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [profileMenuOpen]);
+
+  useEffect(
+    () => () => {
+      if (profileHoldTimerRef.current) {
+        window.clearTimeout(profileHoldTimerRef.current);
+      }
+    },
+    [],
+  );
+
   const handleLogout = async () => {
     try {
       if (refreshToken) {
@@ -181,6 +272,61 @@ export function AppLayout() {
     } finally {
       clear();
       navigate("/login");
+    }
+  };
+
+  const clearProfileHoldTimer = () => {
+    if (profileHoldTimerRef.current) {
+      window.clearTimeout(profileHoldTimerRef.current);
+      profileHoldTimerRef.current = null;
+    }
+  };
+
+  const startProfileHold = () => {
+    clearProfileHoldTimer();
+    profileLongPressTriggeredRef.current = false;
+    profileHoldTimerRef.current = window.setTimeout(() => {
+      profileLongPressTriggeredRef.current = true;
+      setProfileMenuOpen(true);
+    }, 450);
+  };
+
+  const handleProfileImageFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      setCropImageSrc(result);
+      setProfileMenuOpen(false);
+    };
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  const handleSaveProfileImage = async (dataUrl: string) => {
+    setSavingProfileImage(true);
+    try {
+      const updatedAccount = await updateCurrentAccountProfile({ profile_image_url: dataUrl });
+      setCurrentAccount(updatedAccount);
+      setCropImageSrc(null);
+    } finally {
+      setSavingProfileImage(false);
+    }
+  };
+
+  const handleDeleteProfileImage = async () => {
+    setSavingProfileImage(true);
+    try {
+      const updatedAccount = await updateCurrentAccountProfile({ profile_image_url: null });
+      setCurrentAccount(updatedAccount);
+      setProfileMenuOpen(false);
+    } finally {
+      setSavingProfileImage(false);
     }
   };
 
@@ -199,11 +345,62 @@ export function AppLayout() {
         <div className="sidebar-inner">
           <div className="sidebar-header">
             <div className="sidebar-brand">
-              <div className="brand-mark" aria-hidden="true">
-                SC
+              <div className="sidebar-profile-shell" ref={profileMenuRef}>
+                <button
+                  type="button"
+                  className="brand-mark sidebar-profile-trigger"
+                  aria-label="Business profile image"
+                  onClick={() => {
+                    if (profileLongPressTriggeredRef.current) {
+                      profileLongPressTriggeredRef.current = false;
+                    }
+                  }}
+                  onPointerDown={startProfileHold}
+                  onPointerUp={clearProfileHoldTimer}
+                  onPointerLeave={clearProfileHoldTimer}
+                  onPointerCancel={clearProfileHoldTimer}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    clearProfileHoldTimer();
+                    profileLongPressTriggeredRef.current = true;
+                    setProfileMenuOpen(true);
+                  }}
+                >
+                  {currentAccount?.profile_image_url ? (
+                    <img src={currentAccount.profile_image_url} alt={businessName} className="sidebar-profile-image" />
+                  ) : (
+                    avatarFallback
+                  )}
+                </button>
+                {profileMenuOpen ? (
+                  <div className="sidebar-profile-menu">
+                    <button
+                      type="button"
+                      className="ghost-button compact-button"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      Edit image
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button compact-button"
+                      onClick={() => void handleDeleteProfileImage()}
+                      disabled={savingProfileImage || !currentAccount?.profile_image_url}
+                    >
+                      Delete image
+                    </button>
+                  </div>
+                ) : null}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="visually-hidden"
+                  onChange={handleProfileImageFile}
+                />
               </div>
               <div>
-                <h1>Navigation</h1>
+                <h1>{businessName}</h1>
               </div>
             </div>
             <button
@@ -262,19 +459,20 @@ export function AppLayout() {
 
           <div className="topbar-right">
             <div className="topbar-meta">
-              {workspaceOptions.length > 1 ? (
-                <div className="topbar-workspace-select">
+              {showsFacebookPageSelector && !loadingFacebookConnections && hasMultipleFacebookConnections ? (
+                <div className="topbar-inline-select">
                   <CustomSelect
-                    value={String(activeWorkspace?.account_id ?? "")}
-                    onChange={(value) => setActiveAccountId(value ? Number(value) : null)}
-                    options={workspaceOptions}
-                    placeholder="Select workspace"
+                    value={String(activeFacebookConnectionId ?? "")}
+                    onChange={(value) => setActiveFacebookConnectionId(value ? Number(value) : null)}
+                    options={facebookPageOptions}
+                    placeholder="Select Facebook Page"
                     variant="compact"
                   />
                 </div>
-              ) : activeWorkspace ? (
+              ) : null}
+              {showsFacebookPageSelector && !loadingFacebookConnections && !hasMultipleFacebookConnections && activeFacebookConnection ? (
                 <div className="topbar-chip topbar-chip-inline">
-                  <strong>{activeWorkspace.account_name}</strong>
+                  <strong>{activeFacebookConnection.name}</strong>
                 </div>
               ) : null}
             </div>
@@ -288,6 +486,14 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+
+      <AvatarCropDialog
+        open={Boolean(cropImageSrc)}
+        imageSrc={cropImageSrc}
+        saving={savingProfileImage}
+        onCancel={() => setCropImageSrc(null)}
+        onSave={(dataUrl) => void handleSaveProfileImage(dataUrl)}
+      />
     </div>
   );
 }

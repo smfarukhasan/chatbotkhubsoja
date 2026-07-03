@@ -7,7 +7,7 @@ import { CustomSelect } from "../components/common/CustomSelect";
 import { PageHeader } from "../components/common/PageHeader";
 import { generatePostDraft, listAIAgents, listAIPrompts } from "../features/ai/api/aiApi";
 import { approvePost, createPost, deletePost, getPost, publishPostNow, rejectPost, schedulePost, updatePost } from "../features/posts/api/postApi";
-import { listPlatformConnections } from "../features/platformConnections/api/platformConnectionApi";
+import { useFacebookPageScope } from "../features/platformConnections/hooks/useFacebookPageScope";
 import type { AIAgentOverview, AIPrompt } from "../shared/types/ai";
 import type { PlatformConnection } from "../shared/types/platformConnection";
 import type { PostGeneratedBy, SocialPost } from "../shared/types/posts";
@@ -25,6 +25,7 @@ export function PostEditorPage() {
   const params = useParams();
   const postId = params.postId ? Number(params.postId) : null;
   const isEditing = Number.isFinite(postId);
+  const { connections: facebookConnections, activeFacebookConnectionId } = useFacebookPageScope();
 
   const [post, setPost] = useState<SocialPost | null>(null);
   const [connections, setConnections] = useState<PlatformConnection[]>([]);
@@ -51,19 +52,21 @@ export function PostEditorPage() {
   });
 
   const loadDependencies = async () => {
-    const [connectionResponse, agentResponse, promptResponse] = await Promise.all([
-      listPlatformConnections(),
+    const [agentResponse, promptResponse] = await Promise.all([
       listAIAgents(),
       listAIPrompts(),
     ]);
-    setConnections(connectionResponse.items.filter((item) => item.platform_type === "facebook_page"));
     setAgents(agentResponse);
     setPrompts(promptResponse.filter((item) => item.prompt_type === "post_generation"));
   };
 
   useEffect(() => {
     loadDependencies().catch(() => setError("Unable to load post dependencies."));
-  }, []);
+  }, [facebookConnections]);
+
+  useEffect(() => {
+    setConnections(facebookConnections);
+  }, [facebookConnections]);
 
   useEffect(() => {
     if (!isEditing || !postId) return;
@@ -93,6 +96,27 @@ export function PostEditorPage() {
     () => prompts.filter((prompt) => !form.ai_agent_id || prompt.ai_agent_id === Number(form.ai_agent_id)),
     [prompts, form.ai_agent_id],
   );
+
+  const visibleConnections = useMemo(() => {
+    if (!activeFacebookConnectionId) {
+      return connections;
+    }
+    return connections.filter(
+      (connection) =>
+        connection.id === activeFacebookConnectionId || String(connection.id) === form.platform_connection_id,
+    );
+  }, [activeFacebookConnectionId, connections, form.platform_connection_id]);
+
+  useEffect(() => {
+    if (isEditing || !activeFacebookConnectionId) {
+      return;
+    }
+    setForm((current) =>
+      current.platform_connection_id
+        ? current
+        : { ...current, platform_connection_id: String(activeFacebookConnectionId) },
+    );
+  }, [activeFacebookConnectionId, isEditing]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -245,7 +269,7 @@ export function PostEditorPage() {
                 onChange={(value) => setForm((current) => ({ ...current, platform_connection_id: value }))}
                 options={[
                   { value: "", label: "No connection selected" },
-                  ...connections.map((connection) => ({ value: String(connection.id), label: connection.name })),
+                  ...visibleConnections.map((connection) => ({ value: String(connection.id), label: connection.name })),
                 ]}
               />
             </label>

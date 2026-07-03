@@ -20,6 +20,7 @@ import { ConnectionsPage } from "../pages/ConnectionsPage";
 import { CommentsModerationPage } from "../pages/CommentsModerationPage";
 import { ChangePasswordPage } from "../pages/ChangePasswordPage";
 import { FacebookConnectionCallbackPage } from "../pages/FacebookConnectionCallbackPage";
+import { FacebookLiveInboxPage } from "../pages/FacebookLiveInboxPage";
 import { InboxPage } from "../pages/InboxPage";
 import { PostEditorPage } from "../pages/PostEditorPage";
 import { PostsPage } from "../pages/PostsPage";
@@ -114,14 +115,7 @@ export const router = createBrowserRouter([
           },
           {
             path: "inbox/facebook",
-            element: (
-              <InboxPage
-                defaultPlatform="facebook_page"
-                eyebrow="Facebook Inbox"
-                title="Facebook conversation inbox"
-                description="Review and respond to Facebook Page customer threads in the active workspace."
-              />
-            ),
+            element: <FacebookLiveInboxPage />,
           },
           {
             path: "posts",

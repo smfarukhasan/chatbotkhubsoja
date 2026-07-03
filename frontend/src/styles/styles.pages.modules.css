@@ -50,6 +50,36 @@
   align-items: start;
 }
 
+.inbox-page-live {
+  grid-template-columns: clamp(270px, 28vw, 330px) minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 0;
+}
+
+.facebook-live-inbox-page {
+  width: calc(100% + 16px);
+  margin-left: -16px;
+}
+
+.whatsapp-inbox-page {
+  width: calc(100% + 16px);
+  margin-left: -16px;
+}
+
+.facebook-live-inbox-page .inbox-sidebar {
+  padding-right: 6px;
+}
+
+.whatsapp-inbox-page .inbox-sidebar {
+  padding-right: 6px;
+}
+
+.whatsapp-inbox-shell {
+  grid-template-columns: clamp(250px, 26vw, 320px) minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 0;
+}
+
 .inbox-sidebar,
 .inbox-main,
 .comments-sidebar,
@@ -71,11 +101,62 @@
   margin-top: 18px;
 }
 
+.facebook-live-inbox-page .inbox-list {
+  margin-top: 0;
+}
+
+.whatsapp-inbox-page .inbox-list {
+  margin-top: 0;
+}
+
+.facebook-live-inbox-page .inbox-list .inbox-toolbar {
+  gap: 6px;
+  padding: 12px 14px 10px;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid rgba(181, 212, 255, 0.08);
+  background: transparent;
+  box-shadow: none;
+}
+
+.whatsapp-inbox-page .inbox-list .inbox-toolbar {
+  gap: 8px;
+  padding: 12px 14px 12px;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid rgba(181, 212, 255, 0.08);
+  background: transparent;
+  box-shadow: none;
+}
+
+.facebook-live-inbox-page .inbox-list .inbox-search-field {
+  gap: 0;
+}
+
+.whatsapp-inbox-page .inbox-list .inbox-search-field {
+  gap: 0;
+}
+
 .conversation-list,
 .comment-list {
   display: grid;
   padding: 12px;
   gap: 10px;
+}
+
+.conversation-row-shell {
+  display: grid;
+  gap: 8px;
+}
+
+.facebook-live-inbox-page .conversation-list {
+  padding: 10px;
+  gap: 8px;
+}
+
+.whatsapp-inbox-page .conversation-list {
+  padding: 10px;
+  gap: 8px;
 }
 
 .conversation-row,
@@ -89,6 +170,61 @@
   color: inherit;
   box-shadow: none;
   cursor: pointer;
+}
+
+.conversation-row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.conversation-ai-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(126, 240, 193, 0.2);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  background: rgba(126, 240, 193, 0.1);
+}
+
+.conversation-ai-tag.ai-mode-manual {
+  border-color: rgba(255, 191, 102, 0.22);
+  background: rgba(255, 191, 102, 0.1);
+}
+
+.conversation-ai-tag.ai-mode-off {
+  border-color: rgba(255, 155, 155, 0.2);
+  background: rgba(255, 155, 155, 0.1);
+}
+
+.conversation-ai-menu {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 2px 10px 10px;
+}
+
+.conversation-ai-menu .ghost-button.compact-button {
+  min-width: 180px;
+  justify-content: center;
+}
+
+.facebook-live-inbox-page .conversation-row {
+  padding: 14px 16px;
+}
+
+.whatsapp-inbox-page .conversation-row {
+  padding: 14px 16px;
+}
+
+.whatsapp-inbox-page .conversation-row p {
+  margin-top: 4px;
 }
 
 .conversation-row.active,
@@ -134,6 +270,29 @@
   justify-content: center;
 }
 
+.whatsapp-inbox-page .inbox-empty {
+  display: grid;
+  place-items: center;
+  min-height: 62vh;
+  padding: 28px;
+  text-align: center;
+}
+
+.comments-post-header {
+  display: grid;
+  gap: 14px;
+}
+
+.comments-post-content {
+  margin: 0;
+  color: var(--text-soft);
+  white-space: pre-wrap;
+}
+
+.comments-post-meta {
+  margin: -4px 0 0;
+}
+
 .inbox-thread-layout,
 .comments-layout {
   display: grid;
@@ -141,6 +300,18 @@
   gap: 18px;
   margin-top: 18px;
   align-items: start;
+}
+
+.facebook-live-inbox-page .inbox-thread-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  margin-top: 10px;
+}
+
+.whatsapp-inbox-page .inbox-thread-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  margin-top: 10px;
 }
 
 .comments-layout {
@@ -158,6 +329,47 @@
   max-height: 62vh;
   padding: 22px;
   overflow: auto;
+}
+
+.facebook-live-inbox-page .thread-scroll {
+  gap: 10px;
+  max-height: 70vh;
+  padding: 12px 12px 20px;
+  width: 100%;
+}
+
+.whatsapp-inbox-page .thread-scroll {
+  gap: 10px;
+  max-height: 70vh;
+  padding: 12px 12px 20px;
+  width: 100%;
+}
+
+.facebook-live-inbox-page .thread-end-spacer {
+  height: 32px;
+}
+
+.whatsapp-inbox-page .inbox-thread-header {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
+    rgba(6, 16, 28, 0.82);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+}
+
+.whatsapp-inbox-page .whatsapp-inbox-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 0;
+}
+
+.whatsapp-inbox-page .whatsapp-assign-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 0;
 }
 
 .thread-scroll::-webkit-scrollbar,
@@ -182,6 +394,12 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+.facebook-live-inbox-page .message-bubble {
+  width: 85%;
+  max-width: 85%;
+  padding: 14px 16px;
+}
+
 .comment-original-card {
   max-width: 100%;
   background: linear-gradient(135deg, rgba(255, 191, 102, 0.12), rgba(255, 255, 255, 0.04));
@@ -194,6 +412,14 @@
 .message-bubble.outbound {
   justify-self: end;
   background: linear-gradient(135deg, rgba(126, 240, 193, 0.14), rgba(90, 216, 255, 0.16));
+}
+
+.facebook-live-inbox-page .message-bubble.inbound {
+  margin-right: 72px;
+}
+
+.facebook-live-inbox-page .message-bubble.outbound {
+  margin-left: 72px;
 }
 
 .message-bubble p,

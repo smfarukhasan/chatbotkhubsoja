@@ -1,0 +1,1277 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                                                   Int                        @id @default(autoincrement())
+  email                                                String                     @unique(map: "ix_users_email") @db.VarChar(255)
+  fullName                                             String?                    @map("full_name") @db.VarChar(255)
+  hashedPassword                                       String                     @map("hashed_password") @db.VarChar(255)
+  isActive                                             Boolean                    @default(true) @map("is_active")
+  isSuperuser                                          Boolean                    @default(false) @map("is_superuser")
+  status                                               UserStatus                 @default(ACTIVE)
+  createdAt                                            DateTime                   @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt                                            DateTime                   @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  userRole                                             UserRole                   @default(ADMIN) @map("user_role")
+  managedByUserId                                      Int?                       @map("managed_by_user_id")
+  permissionsJson                                      Json?                      @map("permissions_json")
+  account_users                                        account_users[]
+  action_usage_logs                                    action_usage_logs[]
+  audit_logs                                           audit_logs[]
+  conversations                                        conversations[]
+  facebook_comment_replies                             facebook_comment_replies[]
+  facebook_comments                                    facebook_comments[]
+  llm_token_usage                                      llm_token_usage[]
+  memberships                                          Membership[]
+  messages                                             messages[]
+  refreshTokens                                        RefreshToken[]
+  social_posts_social_posts_approved_by_user_idTousers social_posts[]             @relation("social_posts_approved_by_user_idTousers")
+  social_posts_social_posts_created_by_user_idTousers  social_posts[]             @relation("social_posts_created_by_user_idTousers")
+  social_posts_social_posts_rejected_by_user_idTousers social_posts[]             @relation("social_posts_rejected_by_user_idTousers")
+  managedByUser                                        User?                      @relation("UserManager", fields: [managedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_users_managed_by_user_id_users")
+  managedUsers                                         User[]                     @relation("UserManager")
+
+  @@index([id], map: "ix_users_id")
+  @@index([managedByUserId], map: "ix_users_managed_by_user_id")
+  @@index([userRole], map: "ix_users_user_role")
+  @@map("users")
+}
+
+model Account {
+  id                       Int                        @id @default(autoincrement())
+  name                     String                     @db.VarChar(255)
+  slug                     String                     @unique(map: "ix_accounts_slug") @db.VarChar(100)
+  isActive                 Boolean                    @default(true) @map("is_active")
+  createdAt                DateTime                   @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt                DateTime                   @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  tokenBalance             Int                        @map("token_balance")
+  monthlyTokenCredit       Int                        @map("monthly_token_credit")
+  tokenCreditLastAppliedAt DateTime?                  @map("token_credit_last_applied_at") @db.DateTime(0)
+  tokenCreditNextResetAt   DateTime?                  @map("token_credit_next_reset_at") @db.DateTime(0)
+  profile_image_url        String?                    @db.Text
+  account_subscriptions    account_subscriptions[]
+  account_users            account_users[]
+  action_usage_logs        action_usage_logs[]
+  ai_agents                ai_agents[]
+  ai_knowledge_sources     ai_knowledge_sources[]
+  ai_prompts               ai_prompts[]
+  audit_logs               audit_logs[]
+  automation_workflows     automation_workflows[]
+  billing_transactions     billing_transactions[]
+  conversations            conversations[]
+  facebook_comment_replies facebook_comment_replies[]
+  facebook_comments        facebook_comments[]
+  faq_knowledge            faq_knowledge[]
+  llm_token_usage          llm_token_usage[]
+  memberships              Membership[]
+  messages                 messages[]
+  onboardingKeys           OnboardingKey[]
+  platformConnections      PlatformConnection[]
+  social_posts             social_posts[]
+  sync_jobs                sync_jobs[]
+  token_ledger             token_ledger[]
+  token_wallets            token_wallets?
+  webhookEvents            WebhookEvent[]
+
+  @@index([id], map: "ix_accounts_id")
+  @@index([tokenCreditNextResetAt], map: "ix_accounts_token_credit_next_reset_at")
+  @@map("accounts")
+}
+
+model Membership {
+  id           Int              @id @default(autoincrement())
+  accountId    Int              @map("account_id")
+  userId       Int              @map("user_id")
+  role         memberships_role @default(MEMBER)
+  status       MembershipStatus @default(ACTIVE)
+  invitedEmail String?          @map("invited_email") @db.VarChar(255)
+  createdAt    DateTime         @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime         @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  account      Account          @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_memberships_account_id_accounts")
+  user         User             @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_memberships_user_id_users")
+
+  @@unique([accountId, userId], name: "uq_memberships_account_id_user_id", map: "uq_memberships_account_id_user_id")
+  @@index([accountId], map: "ix_memberships_account_id")
+  @@index([id], map: "ix_memberships_id")
+  @@index([userId], map: "ix_memberships_user_id")
+  @@map("memberships")
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  tokenJti  String    @unique(map: "ix_refresh_tokens_token_jti") @map("token_jti") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(0)
+  revokedAt DateTime? @map("revoked_at") @db.DateTime(0)
+  createdAt DateTime  @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime  @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  user      User      @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_refresh_tokens_user_id_users")
+
+  @@index([id], map: "ix_refresh_tokens_id")
+  @@index([userId], map: "ix_refresh_tokens_user_id")
+  @@map("refresh_tokens")
+}
+
+model OnboardingKey {
+  id           Int                  @id @default(autoincrement())
+  accountId    Int                  @map("account_id")
+  key          String               @unique(map: "ix_onboarding_keys_key") @db.VarChar(64)
+  role         onboarding_keys_role @default(MEMBER)
+  maxUses      Int                  @default(1) @map("max_uses")
+  usedCount    Int                  @default(0) @map("used_count")
+  expiresAt    DateTime?            @map("expires_at") @db.DateTime(0)
+  revokedAt    DateTime?            @map("revoked_at") @db.DateTime(0)
+  invitedEmail String?              @map("invited_email") @db.VarChar(255)
+  createdAt    DateTime             @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime             @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  account      Account              @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_onboarding_keys_account_id_accounts")
+
+  @@index([accountId], map: "ix_onboarding_keys_account_id")
+  @@index([id], map: "ix_onboarding_keys_id")
+  @@map("onboarding_keys")
+}
+
+model PlatformConnection {
+  id                    Int                    @id @default(autoincrement())
+  accountId             Int                    @map("account_id")
+  platformType          PlatformType           @map("platform_type")
+  name                  String                 @db.VarChar(255)
+  externalId            String?                @map("external_id") @db.VarChar(255)
+  externalName          String?                @map("external_name") @db.VarChar(255)
+  status                ConnectionStatus       @default(PENDING)
+  encryptedAccessToken  String?                @map("encrypted_access_token") @db.VarChar(2048)
+  encryptedRefreshToken String?                @map("encrypted_refresh_token") @db.VarChar(2048)
+  tokenHint             String?                @map("token_hint") @db.VarChar(16)
+  webhookUrl            String?                @map("webhook_url") @db.VarChar(500)
+  webhookSecret         String?                @map("webhook_secret") @db.VarChar(255)
+  webhookVerifyToken    String?                @map("webhook_verify_token") @db.VarChar(255)
+  webhookActive         Boolean                @default(false) @map("webhook_active")
+  metadataJson          Json                   @map("metadata_json")
+  settingsJson          Json                   @map("settings_json")
+  lastError             String?                @map("last_error") @db.VarChar(500)
+  createdAt             DateTime               @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt             DateTime               @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  action_usage_logs     action_usage_logs[]
+  ai_agents             ai_agents[]
+  ai_prompts            ai_prompts[]
+  automation_workflows  automation_workflows[]
+  conversations         conversations[]
+  facebook_comments     facebook_comments[]
+  llm_token_usage       llm_token_usage[]
+  account               Account                @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_platform_connections_account_id_accounts")
+  social_posts          social_posts[]
+  sync_jobs             sync_jobs[]
+  webhookEvents         WebhookEvent[]
+
+  @@index([accountId], map: "ix_platform_connections_account_id")
+  @@index([externalId], map: "ix_platform_connections_external_id")
+  @@index([id], map: "ix_platform_connections_id")
+  @@index([platformType], map: "ix_platform_connections_platform_type")
+  @@map("platform_connections")
+}
+
+model WebhookEvent {
+  id                   Int                 @id @default(autoincrement())
+  accountId            Int?                @map("account_id")
+  platformConnectionId Int?                @map("platform_connection_id")
+  platformType         PlatformType        @map("platform_type")
+  source               WebhookEventSource
+  status               WebhookEventStatus  @default(PENDING)
+  eventType            String              @map("event_type") @db.VarChar(100)
+  eventKey             String              @unique(map: "uq_webhook_events_event_key") @map("event_key") @db.VarChar(255)
+  deliveryId           String?             @map("delivery_id") @db.VarChar(255)
+  attempts             Int                 @default(0)
+  receivedAt           DateTime            @map("received_at") @db.DateTime(0)
+  processingStartedAt  DateTime?           @map("processing_started_at") @db.DateTime(0)
+  processedAt          DateTime?           @map("processed_at") @db.DateTime(0)
+  lastTaskId           String?             @map("last_task_id") @db.VarChar(255)
+  errorMessage         String?             @map("error_message") @db.VarChar(500)
+  payloadJson          Json                @map("payload_json")
+  headersJson          Json                @map("headers_json")
+  metadataJson         Json                @map("metadata_json")
+  createdAt            DateTime            @default(dbgenerated("(now())")) @map("created_at") @db.DateTime(0)
+  updatedAt            DateTime            @default(dbgenerated("(now())")) @updatedAt @map("updated_at") @db.DateTime(0)
+  account              Account?            @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_webhook_events_account_id_accounts")
+  platformConnection   PlatformConnection? @relation(fields: [platformConnectionId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_webhook_events_platform_connection_id_platform_connections")
+
+  @@index([accountId], map: "ix_webhook_events_account_id")
+  @@index([deliveryId], map: "ix_webhook_events_delivery_id")
+  @@index([eventType], map: "ix_webhook_events_event_type")
+  @@index([id], map: "ix_webhook_events_id")
+  @@index([platformConnectionId], map: "ix_webhook_events_platform_connection_id")
+  @@index([platformType], map: "ix_webhook_events_platform_type")
+  @@index([processedAt], map: "ix_webhook_events_processed_at")
+  @@index([receivedAt], map: "ix_webhook_events_received_at")
+  @@index([source], map: "ix_webhook_events_source")
+  @@index([status], map: "ix_webhook_events_status")
+  @@map("webhook_events")
+}
+
+model account_subscription_feature_snapshot {
+  id                      Int                   @id @default(autoincrement())
+  account_subscription_id Int
+  feature_catalog_id      Int
+  feature_code            String                @db.VarChar(100)
+  feature_name            String                @db.VarChar(255)
+  included_value          Decimal               @db.Decimal(14, 4)
+  config_json             Json
+  created_at              DateTime              @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at              DateTime              @default(dbgenerated("(now())")) @db.DateTime(0)
+  account_subscriptions   account_subscriptions @relation(fields: [account_subscription_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_subscription_feature_snapshot_account_subscri_84ce")
+  feature_catalog         feature_catalog       @relation(fields: [feature_catalog_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_subscription_feature_snapshot_feature_catalog_6aac")
+
+  @@unique([account_subscription_id, feature_catalog_id], map: "uq_account_subscription_feature_snapshot_subscription_feature")
+  @@index([account_subscription_id], map: "ix_account_subscription_feature_snapshot_account_subscription_id")
+  @@index([feature_catalog_id], map: "ix_account_subscription_feature_snapshot_feature_catalog_id")
+  @@index([feature_code], map: "ix_account_subscription_feature_snapshot_feature_code")
+  @@index([id], map: "ix_account_subscription_feature_snapshot_id")
+}
+
+model account_subscriptions {
+  id                                    Int                                     @id @default(autoincrement())
+  account_id                            Int
+  billing_plan_id                       Int
+  status                                account_subscriptions_status
+  starts_at                             DateTime                                @db.DateTime(0)
+  ends_at                               DateTime?                               @db.DateTime(0)
+  renews_at                             DateTime?                               @db.DateTime(0)
+  canceled_at                           DateTime?                               @db.DateTime(0)
+  external_subscription_id              String?                                 @db.VarChar(255)
+  metadata_json                         Json
+  created_at                            DateTime                                @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at                            DateTime                                @default(dbgenerated("(now())")) @db.DateTime(0)
+  account_subscription_feature_snapshot account_subscription_feature_snapshot[]
+  accounts                              Account                                 @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_subscriptions_account_id_accounts")
+  billing_plans                         billing_plans                           @relation(fields: [billing_plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_subscriptions_billing_plan_id_billing_plans")
+  billing_transactions                  billing_transactions[]
+  token_ledger                          token_ledger[]
+
+  @@index([account_id], map: "ix_account_subscriptions_account_id")
+  @@index([billing_plan_id], map: "ix_account_subscriptions_billing_plan_id")
+  @@index([ends_at], map: "ix_account_subscriptions_ends_at")
+  @@index([external_subscription_id], map: "ix_account_subscriptions_external_subscription_id")
+  @@index([id], map: "ix_account_subscriptions_id")
+  @@index([renews_at], map: "ix_account_subscriptions_renews_at")
+  @@index([starts_at], map: "ix_account_subscriptions_starts_at")
+  @@index([status], map: "ix_account_subscriptions_status")
+}
+
+model account_users {
+  id            Int      @id @default(autoincrement())
+  account_id    Int
+  user_id       Int
+  role_id       Int?
+  invited_email String?  @db.VarChar(255)
+  is_active     Boolean
+  created_at    DateTime @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at    DateTime @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts      Account  @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_users_account_id_accounts")
+  roles         roles?   @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_users_role_id_roles")
+  users         User     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_account_users_user_id_users")
+
+  @@unique([account_id, user_id], map: "uq_account_users_account_id_user_id")
+  @@index([account_id], map: "ix_account_users_account_id")
+  @@index([id], map: "ix_account_users_id")
+  @@index([invited_email], map: "ix_account_users_invited_email")
+  @@index([is_active], map: "ix_account_users_is_active")
+  @@index([role_id], map: "ix_account_users_role_id")
+  @@index([user_id], map: "ix_account_users_user_id")
+}
+
+model action_usage_logs {
+  id                     Int                              @id @default(autoincrement())
+  account_id             Int
+  platform_connection_id Int?
+  actor_user_id          Int?
+  action_type            action_usage_logs_action_type
+  platform_type          action_usage_logs_platform_type?
+  reference_type         String?                          @db.VarChar(100)
+  reference_id           String?                          @db.VarChar(255)
+  quantity               Int                              @default(1)
+  tokens_consumed        Int                              @default(0)
+  estimated_cost         Decimal                          @default(0.0000) @db.Decimal(12, 4)
+  occurred_at            DateTime                         @db.DateTime(0)
+  metadata_json          Json
+  created_at             DateTime                         @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime                         @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account                          @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_action_usage_logs_account_id_accounts")
+  users                  User?                            @relation(fields: [actor_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_action_usage_logs_actor_user_id_users")
+  platform_connections   PlatformConnection?              @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_action_usage_logs_platform_connection_id_platform_connections")
+
+  @@index([account_id], map: "ix_action_usage_logs_account_id")
+  @@index([action_type], map: "ix_action_usage_logs_action_type")
+  @@index([actor_user_id], map: "ix_action_usage_logs_actor_user_id")
+  @@index([id], map: "ix_action_usage_logs_id")
+  @@index([occurred_at], map: "ix_action_usage_logs_occurred_at")
+  @@index([platform_connection_id], map: "ix_action_usage_logs_platform_connection_id")
+  @@index([platform_type], map: "ix_action_usage_logs_platform_type")
+  @@index([reference_id], map: "ix_action_usage_logs_reference_id")
+  @@index([reference_type], map: "ix_action_usage_logs_reference_type")
+}
+
+model ai_agents {
+  id                     Int                    @id @default(autoincrement())
+  account_id             Int
+  platform_connection_id Int?
+  name                   String                 @db.VarChar(255)
+  business_type          String?                @db.VarChar(255)
+  status                 ai_agents_status       @default(DRAFT)
+  settings_json          Json
+  behavior_json          Json
+  created_at             DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account                @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_agents_account_id_accounts")
+  platform_connections   PlatformConnection?    @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_agents_platform_connection_id_platform_connections")
+  ai_knowledge_sources   ai_knowledge_sources[]
+  ai_prompts             ai_prompts[]
+  automation_workflows   automation_workflows[]
+  faq_knowledge          faq_knowledge[]
+  social_posts           social_posts[]
+
+  @@index([account_id], map: "ix_ai_agents_account_id")
+  @@index([id], map: "ix_ai_agents_id")
+  @@index([platform_connection_id], map: "ix_ai_agents_platform_connection_id")
+}
+
+model ai_knowledge_sources {
+  id            Int                              @id @default(autoincrement())
+  account_id    Int
+  ai_agent_id   Int?
+  title         String                           @db.VarChar(255)
+  source_type   ai_knowledge_sources_source_type
+  status        ai_knowledge_sources_status      @default(DRAFT)
+  description   String?                          @db.VarChar(500)
+  content_text  String?                          @db.Text
+  file_name     String?                          @db.VarChar(255)
+  file_size     Int?
+  mime_type     String?                          @db.VarChar(255)
+  storage_key   String?                          @db.VarChar(500)
+  metadata_json Json
+  created_at    DateTime                         @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at    DateTime                         @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts      Account                          @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_knowledge_sources_account_id_accounts")
+  ai_agents     ai_agents?                       @relation(fields: [ai_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_knowledge_sources_ai_agent_id_ai_agents")
+
+  @@index([account_id], map: "ix_ai_knowledge_sources_account_id")
+  @@index([ai_agent_id], map: "ix_ai_knowledge_sources_ai_agent_id")
+  @@index([id], map: "ix_ai_knowledge_sources_id")
+}
+
+model ai_prompts {
+  id                     Int                    @id @default(autoincrement())
+  account_id             Int
+  ai_agent_id            Int?
+  platform_connection_id Int?
+  prompt_type            ai_prompts_prompt_type
+  title                  String                 @db.VarChar(255)
+  content                String                 @db.Text
+  version                Int                    @default(1)
+  is_active              Boolean                @default(true)
+  notes                  String?                @db.VarChar(500)
+  created_at             DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account                @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_prompts_account_id_accounts")
+  ai_agents              ai_agents?             @relation(fields: [ai_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_prompts_ai_agent_id_ai_agents")
+  platform_connections   PlatformConnection?    @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_ai_prompts_platform_connection_id_platform_connections")
+  social_posts           social_posts[]
+
+  @@index([account_id], map: "ix_ai_prompts_account_id")
+  @@index([ai_agent_id], map: "ix_ai_prompts_ai_agent_id")
+  @@index([id], map: "ix_ai_prompts_id")
+  @@index([platform_connection_id], map: "ix_ai_prompts_platform_connection_id")
+  @@index([prompt_type], map: "ix_ai_prompts_prompt_type")
+}
+
+model alembic_version {
+  version_num String @id @db.VarChar(32)
+}
+
+model audit_logs {
+  id            Int                      @id @default(autoincrement())
+  account_id    Int
+  actor_user_id Int?
+  action_type   audit_logs_action_type
+  resource_type audit_logs_resource_type
+  resource_id   String?                  @db.VarChar(255)
+  description   String                   @db.VarChar(500)
+  ip_address    String?                  @db.VarChar(64)
+  user_agent    String?                  @db.VarChar(500)
+  occurred_at   DateTime                 @db.DateTime(0)
+  metadata_json Json
+  created_at    DateTime                 @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at    DateTime                 @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts      Account                  @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_audit_logs_account_id_accounts")
+  users         User?                    @relation(fields: [actor_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_audit_logs_actor_user_id_users")
+
+  @@index([account_id], map: "ix_audit_logs_account_id")
+  @@index([action_type], map: "ix_audit_logs_action_type")
+  @@index([actor_user_id], map: "ix_audit_logs_actor_user_id")
+  @@index([id], map: "ix_audit_logs_id")
+  @@index([occurred_at], map: "ix_audit_logs_occurred_at")
+  @@index([resource_id], map: "ix_audit_logs_resource_id")
+  @@index([resource_type], map: "ix_audit_logs_resource_type")
+}
+
+model automation_workflows {
+  id                     Int                               @id @default(autoincrement())
+  account_id             Int
+  platform_connection_id Int?
+  ai_agent_id            Int?
+  name                   String                            @db.VarChar(255)
+  description            String?                           @db.VarChar(500)
+  status                 automation_workflows_status
+  trigger_type           automation_workflows_trigger_type
+  action_type            automation_workflows_action_type
+  delay_seconds          Int
+  trigger_filters_json   Json
+  action_config_json     Json
+  schedule_timezone      String?                           @db.VarChar(64)
+  schedule_local_time    String?                           @db.VarChar(5)
+  next_run_at            DateTime?                         @db.DateTime(0)
+  last_triggered_at      DateTime?                         @db.DateTime(0)
+  last_result_json       Json
+  created_at             DateTime                          @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime                          @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account                           @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_automation_workflows_account_id_accounts")
+  ai_agents              ai_agents?                        @relation(fields: [ai_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_automation_workflows_ai_agent_id_ai_agents")
+  platform_connections   PlatformConnection?               @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_automation_workflows_platform_connection_id_platform__c5ef")
+
+  @@index([account_id], map: "ix_automation_workflows_account_id")
+  @@index([action_type], map: "ix_automation_workflows_action_type")
+  @@index([ai_agent_id], map: "ix_automation_workflows_ai_agent_id")
+  @@index([id], map: "ix_automation_workflows_id")
+  @@index([next_run_at], map: "ix_automation_workflows_next_run_at")
+  @@index([platform_connection_id], map: "ix_automation_workflows_platform_connection_id")
+  @@index([status], map: "ix_automation_workflows_status")
+  @@index([trigger_type], map: "ix_automation_workflows_trigger_type")
+}
+
+model billing_plans {
+  id                    Int                            @id @default(autoincrement())
+  code                  String                         @unique(map: "ix_billing_plans_code") @db.VarChar(64)
+  name                  String                         @db.VarChar(255)
+  description           String?                        @db.VarChar(500)
+  billing_interval      billing_plans_billing_interval
+  price_usd             Decimal                        @db.Decimal(10, 2)
+  monthly_token_credit  Int
+  is_active             Boolean                        @default(true)
+  metadata_json         Json
+  created_at            DateTime                       @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at            DateTime                       @default(dbgenerated("(now())")) @db.DateTime(0)
+  setup_fee_usd         Decimal                        @db.Decimal(10, 2)
+  account_subscriptions account_subscriptions[]
+  plan_features         plan_features[]
+
+  @@index([billing_interval], map: "ix_billing_plans_billing_interval")
+  @@index([id], map: "ix_billing_plans_id")
+  @@index([is_active], map: "ix_billing_plans_is_active")
+}
+
+model billing_transactions {
+  id                        Int                                   @id @default(autoincrement())
+  account_id                Int
+  account_subscription_id   Int?
+  token_purchase_package_id Int?
+  transaction_type          billing_transactions_transaction_type
+  status                    billing_transactions_status
+  provider_name             String?                               @db.VarChar(100)
+  external_reference        String?                               @db.VarChar(255)
+  currency                  String                                @db.VarChar(8)
+  amount_usd                Decimal                               @db.Decimal(12, 2)
+  tax_usd                   Decimal                               @db.Decimal(12, 2)
+  total_amount_usd          Decimal                               @db.Decimal(12, 2)
+  occurred_at               DateTime                              @db.DateTime(0)
+  paid_at                   DateTime?                             @db.DateTime(0)
+  failed_at                 DateTime?                             @db.DateTime(0)
+  metadata_json             Json
+  created_at                DateTime                              @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at                DateTime                              @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts                  Account                               @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_billing_transactions_account_id_accounts")
+  account_subscriptions     account_subscriptions?                @relation(fields: [account_subscription_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_billing_transactions_account_subscription_id_account__9e48")
+  token_purchase_packages   token_purchase_packages?              @relation(fields: [token_purchase_package_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_billing_transactions_token_purchase_package_id_token__1e81")
+  token_ledger              token_ledger[]
+
+  @@index([account_id], map: "ix_billing_transactions_account_id")
+  @@index([account_subscription_id], map: "ix_billing_transactions_account_subscription_id")
+  @@index([external_reference], map: "ix_billing_transactions_external_reference")
+  @@index([id], map: "ix_billing_transactions_id")
+  @@index([occurred_at], map: "ix_billing_transactions_occurred_at")
+  @@index([provider_name], map: "ix_billing_transactions_provider_name")
+  @@index([status], map: "ix_billing_transactions_status")
+  @@index([token_purchase_package_id], map: "ix_billing_transactions_token_purchase_package_id")
+  @@index([transaction_type], map: "ix_billing_transactions_transaction_type")
+}
+
+model conversations {
+  id                     Int                         @id @default(autoincrement())
+  account_id             Int
+  platform_connection_id Int?
+  assigned_to_user_id    Int?
+  platform_type          conversations_platform_type
+  status                 conversations_status        @default(OPEN)
+  external_thread_id     String?                     @db.VarChar(255)
+  customer_external_id   String                      @db.VarChar(255)
+  customer_name          String?                     @db.VarChar(255)
+  customer_avatar_url    String?                     @db.VarChar(500)
+  customer_phone         String?                     @db.VarChar(64)
+  customer_email         String?                     @db.VarChar(255)
+  subject                String?                     @db.VarChar(255)
+  latest_message_preview String?                     @db.VarChar(500)
+  latest_message_at      DateTime?                   @db.DateTime(0)
+  paused_until           DateTime?                   @db.DateTime(0)
+  resolved_at            DateTime?                   @db.DateTime(0)
+  last_inbound_at        DateTime?                   @db.DateTime(0)
+  metadata_json          Json
+  created_at             DateTime                    @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime                    @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account                     @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_conversations_account_id_accounts")
+  users                  User?                       @relation(fields: [assigned_to_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_conversations_assigned_to_user_id_users")
+  platform_connections   PlatformConnection?         @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_conversations_platform_connection_id_platform_connections")
+  messages               messages[]
+
+  @@index([account_id], map: "ix_conversations_account_id")
+  @@index([assigned_to_user_id], map: "ix_conversations_assigned_to_user_id")
+  @@index([customer_external_id], map: "ix_conversations_customer_external_id")
+  @@index([customer_name], map: "ix_conversations_customer_name")
+  @@index([external_thread_id], map: "ix_conversations_external_thread_id")
+  @@index([id], map: "ix_conversations_id")
+  @@index([latest_message_at], map: "ix_conversations_latest_message_at")
+  @@index([platform_connection_id], map: "ix_conversations_platform_connection_id")
+  @@index([platform_type], map: "ix_conversations_platform_type")
+  @@index([status], map: "ix_conversations_status")
+}
+
+model facebook_comment_replies {
+  id                 Int                                   @id @default(autoincrement())
+  account_id         Int
+  comment_id         Int
+  created_by_user_id Int?
+  sender_type        facebook_comment_replies_sender_type
+  reply_status       facebook_comment_replies_reply_status @default(DRAFT)
+  content            String                                @db.Text
+  external_reply_id  String?                               @db.VarChar(255)
+  error_message      String?                               @db.VarChar(500)
+  sent_at            DateTime?                             @db.DateTime(0)
+  metadata_json      Json
+  created_at         DateTime                              @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at         DateTime                              @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts           Account                               @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_facebook_comment_replies_account_id_accounts")
+  facebook_comments  facebook_comments                     @relation(fields: [comment_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_facebook_comment_replies_comment_id_facebook_comments")
+  users              User?                                 @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_facebook_comment_replies_created_by_user_id_users")
+
+  @@index([account_id], map: "ix_facebook_comment_replies_account_id")
+  @@index([comment_id], map: "ix_facebook_comment_replies_comment_id")
+  @@index([created_by_user_id], map: "ix_facebook_comment_replies_created_by_user_id")
+  @@index([external_reply_id], map: "ix_facebook_comment_replies_external_reply_id")
+  @@index([id], map: "ix_facebook_comment_replies_id")
+  @@index([reply_status], map: "ix_facebook_comment_replies_reply_status")
+  @@index([sender_type], map: "ix_facebook_comment_replies_sender_type")
+}
+
+model facebook_comments {
+  id                         Int                             @id @default(autoincrement())
+  account_id                 Int
+  platform_connection_id     Int?
+  assigned_to_user_id        Int?
+  platform_type              facebook_comments_platform_type
+  status                     facebook_comments_status        @default(PENDING)
+  post_external_id           String                          @db.VarChar(255)
+  post_title                 String?                         @db.VarChar(255)
+  post_url                   String?                         @db.VarChar(500)
+  external_comment_id        String                          @db.VarChar(255)
+  parent_external_comment_id String?                         @db.VarChar(255)
+  commenter_external_id      String                          @db.VarChar(255)
+  commenter_name             String?                         @db.VarChar(255)
+  commenter_avatar_url       String?                         @db.VarChar(500)
+  comment_text               String                          @db.Text
+  ai_draft_reply             String?                         @db.Text
+  flagged_reason             String?                         @db.VarChar(500)
+  moderation_notes           String?                         @db.VarChar(1000)
+  commented_at               DateTime?                       @db.DateTime(0)
+  last_replied_at            DateTime?                       @db.DateTime(0)
+  metadata_json              Json
+  created_at                 DateTime                        @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at                 DateTime                        @default(dbgenerated("(now())")) @db.DateTime(0)
+  facebook_comment_replies   facebook_comment_replies[]
+  accounts                   Account                         @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_facebook_comments_account_id_accounts")
+  users                      User?                           @relation(fields: [assigned_to_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_facebook_comments_assigned_to_user_id_users")
+  platform_connections       PlatformConnection?             @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_facebook_comments_platform_connection_id_platform_connections")
+
+  @@index([account_id], map: "ix_facebook_comments_account_id")
+  @@index([assigned_to_user_id], map: "ix_facebook_comments_assigned_to_user_id")
+  @@index([commented_at], map: "ix_facebook_comments_commented_at")
+  @@index([commenter_external_id], map: "ix_facebook_comments_commenter_external_id")
+  @@index([commenter_name], map: "ix_facebook_comments_commenter_name")
+  @@index([external_comment_id], map: "ix_facebook_comments_external_comment_id")
+  @@index([id], map: "ix_facebook_comments_id")
+  @@index([parent_external_comment_id], map: "ix_facebook_comments_parent_external_comment_id")
+  @@index([platform_connection_id], map: "ix_facebook_comments_platform_connection_id")
+  @@index([platform_type], map: "ix_facebook_comments_platform_type")
+  @@index([post_external_id], map: "ix_facebook_comments_post_external_id")
+  @@index([status], map: "ix_facebook_comments_status")
+}
+
+model faq_knowledge {
+  id          Int        @id @default(autoincrement())
+  account_id  Int
+  ai_agent_id Int?
+  question    String     @db.VarChar(500)
+  answer      String     @db.Text
+  tags_json   Json
+  is_active   Boolean    @default(true)
+  created_at  DateTime   @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at  DateTime   @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts    Account    @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_faq_knowledge_account_id_accounts")
+  ai_agents   ai_agents? @relation(fields: [ai_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_faq_knowledge_ai_agent_id_ai_agents")
+
+  @@index([account_id], map: "ix_faq_knowledge_account_id")
+  @@index([ai_agent_id], map: "ix_faq_knowledge_ai_agent_id")
+  @@index([id], map: "ix_faq_knowledge_id")
+}
+
+model feature_catalog {
+  id                                    Int                                     @id @default(autoincrement())
+  code                                  String                                  @unique(map: "ix_feature_catalog_code") @db.VarChar(100)
+  name                                  String                                  @db.VarChar(255)
+  description                           String?                                 @db.VarChar(500)
+  value_type                            feature_catalog_value_type
+  unit_label                            String?                                 @db.VarChar(50)
+  is_active                             Boolean
+  metadata_json                         Json
+  created_at                            DateTime                                @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at                            DateTime                                @default(dbgenerated("(now())")) @db.DateTime(0)
+  account_subscription_feature_snapshot account_subscription_feature_snapshot[]
+  plan_features                         plan_features[]
+
+  @@index([id], map: "ix_feature_catalog_id")
+  @@index([is_active], map: "ix_feature_catalog_is_active")
+  @@index([value_type], map: "ix_feature_catalog_value_type")
+}
+
+model llm_token_usage {
+  id                     Int                 @id @default(autoincrement())
+  account_id             Int
+  platform_connection_id Int?
+  actor_user_id          Int?
+  provider               String              @db.VarChar(100)
+  model_name             String              @db.VarChar(100)
+  feature_name           String              @db.VarChar(100)
+  reference_type         String?             @db.VarChar(100)
+  reference_id           String?             @db.VarChar(255)
+  prompt_tokens          Int                 @default(0)
+  completion_tokens      Int                 @default(0)
+  total_tokens           Int                 @default(0)
+  estimated_cost         Decimal             @default(0.000000) @db.Decimal(12, 6)
+  request_count          Int                 @default(1)
+  used_at                DateTime            @db.DateTime(0)
+  metadata_json          Json
+  created_at             DateTime            @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime            @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account             @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_llm_token_usage_account_id_accounts")
+  users                  User?               @relation(fields: [actor_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_llm_token_usage_actor_user_id_users")
+  platform_connections   PlatformConnection? @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_llm_token_usage_platform_connection_id_platform_connections")
+
+  @@index([account_id], map: "ix_llm_token_usage_account_id")
+  @@index([actor_user_id], map: "ix_llm_token_usage_actor_user_id")
+  @@index([feature_name], map: "ix_llm_token_usage_feature_name")
+  @@index([id], map: "ix_llm_token_usage_id")
+  @@index([model_name], map: "ix_llm_token_usage_model_name")
+  @@index([platform_connection_id], map: "ix_llm_token_usage_platform_connection_id")
+  @@index([provider], map: "ix_llm_token_usage_provider")
+  @@index([reference_id], map: "ix_llm_token_usage_reference_id")
+  @@index([reference_type], map: "ix_llm_token_usage_reference_type")
+  @@index([used_at], map: "ix_llm_token_usage_used_at")
+}
+
+model messages {
+  id                  Int                      @id @default(autoincrement())
+  account_id          Int
+  conversation_id     Int
+  created_by_user_id  Int?
+  sender_type         messages_sender_type
+  direction           messages_direction
+  delivery_status     messages_delivery_status @default(PENDING)
+  sender_name         String?                  @db.VarChar(255)
+  sender_external_id  String?                  @db.VarChar(255)
+  external_message_id String?                  @db.VarChar(255)
+  content             String                   @db.Text
+  error_message       String?                  @db.VarChar(500)
+  metadata_json       Json
+  created_at          DateTime                 @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at          DateTime                 @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts            Account                  @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_messages_account_id_accounts")
+  conversations       conversations            @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_messages_conversation_id_conversations")
+  users               User?                    @relation(fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_messages_created_by_user_id_users")
+
+  @@index([account_id], map: "ix_messages_account_id")
+  @@index([conversation_id], map: "ix_messages_conversation_id")
+  @@index([created_by_user_id], map: "ix_messages_created_by_user_id")
+  @@index([delivery_status], map: "ix_messages_delivery_status")
+  @@index([direction], map: "ix_messages_direction")
+  @@index([external_message_id], map: "ix_messages_external_message_id")
+  @@index([id], map: "ix_messages_id")
+  @@index([sender_external_id], map: "ix_messages_sender_external_id")
+  @@index([sender_type], map: "ix_messages_sender_type")
+}
+
+model permissions {
+  id               Int                @id @default(autoincrement())
+  code             String             @unique(map: "ix_permissions_code") @db.VarChar(120)
+  name             String             @db.VarChar(255)
+  description      String?            @db.VarChar(500)
+  resource         String             @db.VarChar(100)
+  action           String             @db.VarChar(100)
+  is_system        Boolean
+  metadata_json    Json
+  created_at       DateTime           @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at       DateTime           @default(dbgenerated("(now())")) @db.DateTime(0)
+  role_permissions role_permissions[]
+
+  @@index([action], map: "ix_permissions_action")
+  @@index([id], map: "ix_permissions_id")
+  @@index([is_system], map: "ix_permissions_is_system")
+  @@index([resource], map: "ix_permissions_resource")
+}
+
+model plan_features {
+  id                 Int             @id @default(autoincrement())
+  billing_plan_id    Int
+  feature_catalog_id Int
+  included_value     Decimal         @db.Decimal(14, 4)
+  overage_price_usd  Decimal?        @db.Decimal(12, 4)
+  config_json        Json
+  created_at         DateTime        @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at         DateTime        @default(dbgenerated("(now())")) @db.DateTime(0)
+  billing_plans      billing_plans   @relation(fields: [billing_plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_plan_features_billing_plan_id_billing_plans")
+  feature_catalog    feature_catalog @relation(fields: [feature_catalog_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_plan_features_feature_catalog_id_feature_catalog")
+
+  @@unique([billing_plan_id, feature_catalog_id], map: "uq_plan_features_plan_feature")
+  @@index([billing_plan_id], map: "ix_plan_features_billing_plan_id")
+  @@index([feature_catalog_id], map: "ix_plan_features_feature_catalog_id")
+  @@index([id], map: "ix_plan_features_id")
+}
+
+model role_permissions {
+  id            Int         @id @default(autoincrement())
+  role_id       Int
+  permission_id Int
+  created_at    DateTime    @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at    DateTime    @default(dbgenerated("(now())")) @db.DateTime(0)
+  permissions   permissions @relation(fields: [permission_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role_permissions_permission_id_permissions")
+  roles         roles       @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_role_permissions_role_id_roles")
+
+  @@unique([role_id, permission_id], map: "uq_role_permissions_role_id_permission_id")
+  @@index([id], map: "ix_role_permissions_id")
+  @@index([permission_id], map: "ix_role_permissions_permission_id")
+  @@index([role_id], map: "ix_role_permissions_role_id")
+}
+
+model roles {
+  id               Int                @id @default(autoincrement())
+  code             String             @unique(map: "ix_roles_code") @db.VarChar(100)
+  name             String             @db.VarChar(255)
+  description      String?            @db.VarChar(500)
+  scope            roles_scope
+  is_system        Boolean
+  metadata_json    Json
+  created_at       DateTime           @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at       DateTime           @default(dbgenerated("(now())")) @db.DateTime(0)
+  account_users    account_users[]
+  role_permissions role_permissions[]
+
+  @@index([id], map: "ix_roles_id")
+  @@index([is_system], map: "ix_roles_is_system")
+  @@index([scope], map: "ix_roles_scope")
+}
+
+model social_posts {
+  id                                            Int                        @id @default(autoincrement())
+  account_id                                    Int
+  platform_connection_id                        Int?
+  ai_agent_id                                   Int?
+  ai_prompt_id                                  Int?
+  created_by_user_id                            Int?
+  approved_by_user_id                           Int?
+  rejected_by_user_id                           Int?
+  platform_type                                 social_posts_platform_type
+  status                                        social_posts_status        @default(DRAFT)
+  generated_by                                  social_posts_generated_by  @default(HUMAN_ADMIN)
+  title                                         String?                    @db.VarChar(255)
+  content                                       String                     @db.Text
+  media_urls                                    Json
+  external_post_id                              String?                    @db.VarChar(255)
+  is_llm_generated                              Boolean                    @default(false)
+  requires_approval                             Boolean                    @default(false)
+  scheduled_for                                 DateTime?                  @db.DateTime(0)
+  published_at                                  DateTime?                  @db.DateTime(0)
+  approved_at                                   DateTime?                  @db.DateTime(0)
+  rejected_at                                   DateTime?                  @db.DateTime(0)
+  rejection_reason                              String?                    @db.VarChar(500)
+  last_error                                    String?                    @db.VarChar(500)
+  metadata_json                                 Json
+  created_at                                    DateTime                   @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at                                    DateTime                   @default(dbgenerated("(now())")) @db.DateTime(0)
+  ai_auto_reply_enabled                         Boolean                    @default(false)
+  accounts                                      Account                    @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_account_id_accounts")
+  ai_agents                                     ai_agents?                 @relation(fields: [ai_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_ai_agent_id_ai_agents")
+  ai_prompts                                    ai_prompts?                @relation(fields: [ai_prompt_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_ai_prompt_id_ai_prompts")
+  users_social_posts_approved_by_user_idTousers User?                      @relation("social_posts_approved_by_user_idTousers", fields: [approved_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_approved_by_user_id_users")
+  users_social_posts_created_by_user_idTousers  User?                      @relation("social_posts_created_by_user_idTousers", fields: [created_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_created_by_user_id_users")
+  platform_connections                          PlatformConnection?        @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_platform_connection_id_platform_connections")
+  users_social_posts_rejected_by_user_idTousers User?                      @relation("social_posts_rejected_by_user_idTousers", fields: [rejected_by_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_social_posts_rejected_by_user_id_users")
+
+  @@index([account_id], map: "ix_social_posts_account_id")
+  @@index([ai_agent_id], map: "ix_social_posts_ai_agent_id")
+  @@index([ai_prompt_id], map: "ix_social_posts_ai_prompt_id")
+  @@index([approved_by_user_id], map: "ix_social_posts_approved_by_user_id")
+  @@index([created_by_user_id], map: "ix_social_posts_created_by_user_id")
+  @@index([external_post_id], map: "ix_social_posts_external_post_id")
+  @@index([id], map: "ix_social_posts_id")
+  @@index([platform_connection_id], map: "ix_social_posts_platform_connection_id")
+  @@index([platform_type], map: "ix_social_posts_platform_type")
+  @@index([rejected_by_user_id], map: "ix_social_posts_rejected_by_user_id")
+  @@index([scheduled_for], map: "ix_social_posts_scheduled_for")
+  @@index([status], map: "ix_social_posts_status")
+}
+
+model sync_jobs {
+  id                     Int                 @id @default(autoincrement())
+  account_id             Int?
+  platform_connection_id Int?
+  status                 sync_jobs_status    @default(PENDING)
+  job_type               sync_jobs_job_type
+  dedupe_key             String?             @unique(map: "uq_sync_jobs_dedupe_key") @db.VarChar(255)
+  scheduled_for          DateTime            @db.DateTime(0)
+  retry_after            DateTime?           @db.DateTime(0)
+  started_at             DateTime?           @db.DateTime(0)
+  completed_at           DateTime?           @db.DateTime(0)
+  attempts               Int                 @default(0)
+  max_attempts           Int                 @default(5)
+  last_task_id           String?             @db.VarChar(255)
+  error_message          String?             @db.VarChar(500)
+  payload_json           Json
+  result_json            Json
+  created_at             DateTime            @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime            @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account?            @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_sync_jobs_account_id_accounts")
+  platform_connections   PlatformConnection? @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_sync_jobs_platform_connection_id_platform_connections")
+
+  @@index([account_id], map: "ix_sync_jobs_account_id")
+  @@index([id], map: "ix_sync_jobs_id")
+  @@index([job_type], map: "ix_sync_jobs_job_type")
+  @@index([platform_connection_id], map: "ix_sync_jobs_platform_connection_id")
+  @@index([retry_after], map: "ix_sync_jobs_retry_after")
+  @@index([scheduled_for], map: "ix_sync_jobs_scheduled_for")
+  @@index([status], map: "ix_sync_jobs_status")
+}
+
+model token_ledger {
+  id                      Int                           @id @default(autoincrement())
+  token_wallet_id         Int
+  account_id              Int
+  account_subscription_id Int?
+  billing_transaction_id  Int?
+  entry_type              token_ledger_entry_type
+  source_type             token_ledger_source_type
+  delta_tokens            Int
+  balance_before          Int
+  balance_after           Int
+  unit_price_usd          Decimal?                      @db.Decimal(12, 6)
+  total_price_usd         Decimal?                      @db.Decimal(12, 4)
+  reference_type          String?                       @db.VarChar(100)
+  reference_id            String?                       @db.VarChar(255)
+  notes                   String?                       @db.VarChar(500)
+  occurred_at             DateTime                      @db.DateTime(0)
+  metadata_json           Json
+  created_at              DateTime                      @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at              DateTime                      @default(dbgenerated("(now())")) @db.DateTime(0)
+  allocation_type         token_ledger_allocation_type?
+  remaining_tokens        Int?
+  expires_at              DateTime?                     @db.DateTime(0)
+  expired_at              DateTime?                     @db.DateTime(0)
+  is_expired              Boolean
+  accounts                Account                       @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_token_ledger_account_id_accounts")
+  account_subscriptions   account_subscriptions?        @relation(fields: [account_subscription_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_token_ledger_account_subscription_id_account_subscriptions")
+  billing_transactions    billing_transactions?         @relation(fields: [billing_transaction_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_token_ledger_billing_transaction_id_billing_transactions")
+  token_wallets           token_wallets                 @relation(fields: [token_wallet_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_token_ledger_token_wallet_id_token_wallets")
+
+  @@index([account_id], map: "ix_token_ledger_account_id")
+  @@index([account_subscription_id], map: "ix_token_ledger_account_subscription_id")
+  @@index([allocation_type], map: "ix_token_ledger_allocation_type")
+  @@index([billing_transaction_id], map: "ix_token_ledger_billing_transaction_id")
+  @@index([entry_type], map: "ix_token_ledger_entry_type")
+  @@index([expires_at], map: "ix_token_ledger_expires_at")
+  @@index([id], map: "ix_token_ledger_id")
+  @@index([is_expired], map: "ix_token_ledger_is_expired")
+  @@index([occurred_at], map: "ix_token_ledger_occurred_at")
+  @@index([reference_id], map: "ix_token_ledger_reference_id")
+  @@index([reference_type], map: "ix_token_ledger_reference_type")
+  @@index([source_type], map: "ix_token_ledger_source_type")
+  @@index([token_wallet_id], map: "ix_token_ledger_token_wallet_id")
+}
+
+model token_purchase_packages {
+  id                   Int                    @id @default(autoincrement())
+  code                 String                 @unique(map: "ix_token_purchase_packages_code") @db.VarChar(100)
+  name                 String                 @db.VarChar(255)
+  description          String?                @db.VarChar(500)
+  token_amount         Int
+  bonus_tokens         Int
+  price_usd            Decimal                @db.Decimal(10, 2)
+  currency             String                 @db.VarChar(8)
+  is_active            Boolean
+  metadata_json        Json
+  created_at           DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at           DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  billing_transactions billing_transactions[]
+
+  @@index([id], map: "ix_token_purchase_packages_id")
+  @@index([is_active], map: "ix_token_purchase_packages_is_active")
+}
+
+model token_wallets {
+  id                       Int                  @id @default(autoincrement())
+  account_id               Int                  @unique(map: "uq_token_wallets_account_id")
+  status                   token_wallets_status
+  balance_tokens           Int
+  reserved_tokens          Int
+  lifetime_credited_tokens Int
+  lifetime_debited_tokens  Int
+  metadata_json            Json
+  created_at               DateTime             @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at               DateTime             @default(dbgenerated("(now())")) @db.DateTime(0)
+  token_ledger             token_ledger[]
+  accounts                 Account              @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_token_wallets_account_id_accounts")
+
+  @@index([account_id], map: "ix_token_wallets_account_id")
+  @@index([id], map: "ix_token_wallets_id")
+  @@index([status], map: "ix_token_wallets_status")
+}
+
+enum UserRole {
+  OWNER
+  SUPER_ADMIN
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  REVOKED
+}
+
+enum PlatformType {
+  FACEBOOK_PAGE
+  WHATSAPP
+}
+
+enum ConnectionStatus {
+  PENDING
+  CONNECTED
+  ACTION_REQUIRED
+  DISCONNECTED
+  ERROR
+}
+
+enum WebhookEventSource {
+  FACEBOOK_PAGE
+  WHATSAPP
+}
+
+enum WebhookEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum token_wallets_status {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum account_subscriptions_status {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum audit_logs_action_type {
+  ADMIN_ACTION
+  ACCOUNT_CREATED
+  ACCOUNT_JOINED
+  ONBOARDING_KEY_CREATED
+  ONBOARDING_KEY_REVOKED
+  CONNECTION_CREATED
+  CONNECTION_UPDATED
+  CONNECTION_STATUS_UPDATED
+  CONNECTION_DISCONNECTED
+  CONNECTION_DELETED
+  CONVERSATION_ASSIGNED
+  CONVERSATION_STATUS_UPDATED
+  MESSAGE_REPLY_SENT
+  COMMENT_STATUS_UPDATED
+  COMMENT_REPLY_CREATED
+  POST_CREATED
+  POST_UPDATED
+  POST_APPROVED
+  POST_REJECTED
+  POST_SCHEDULED
+  POST_PUBLISH_NOW
+  REPORT_VIEWED
+}
+
+enum memberships_role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum onboarding_keys_role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum sync_jobs_status {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  RETRY_SCHEDULED
+  CANCELED
+}
+
+enum action_usage_logs_action_type {
+  INBOUND_MESSAGE
+  OUTBOUND_MESSAGE
+  COMMENT_REPLY
+  POST_PUBLISH
+  AI_REPLY_GENERATION
+  TOKEN_CREDIT
+  TOKEN_EXPIRATION
+  ADMIN_ACTION
+}
+
+enum ai_knowledge_sources_source_type {
+  FILE
+  URL
+  TEXT
+}
+
+enum ai_prompts_prompt_type {
+  SYSTEM_INSTRUCTION
+  INBOX_REPLY
+  COMMENT_REPLY
+  POST_GENERATION
+}
+
+enum audit_logs_resource_type {
+  ACCOUNT
+  PLATFORM_CONNECTION
+  CONVERSATION
+  MESSAGE
+  FACEBOOK_COMMENT
+  FACEBOOK_COMMENT_REPLY
+  SOCIAL_POST
+  REPORT
+  TEAM
+}
+
+enum billing_plans_billing_interval {
+  MONTHLY
+  YEARLY
+}
+
+enum billing_transactions_transaction_type {
+  SUBSCRIPTION
+  TOKEN_PURCHASE
+  ADJUSTMENT
+  REFUND
+}
+
+enum conversations_platform_type {
+  FACEBOOK_PAGE
+  WHATSAPP
+}
+
+enum facebook_comment_replies_sender_type {
+  CUSTOMER
+  LLM_BOT
+  HUMAN_ADMIN
+  SYSTEM
+}
+
+enum facebook_comments_platform_type {
+  FACEBOOK_PAGE
+  WHATSAPP
+}
+
+enum feature_catalog_value_type {
+  BOOLEAN
+  INTEGER
+  DECIMAL
+  TOKEN
+}
+
+enum messages_sender_type {
+  CUSTOMER
+  LLM_BOT
+  HUMAN_ADMIN
+  SYSTEM
+}
+
+enum roles_scope {
+  SYSTEM
+  ACCOUNT
+}
+
+enum sync_jobs_job_type {
+  WEBHOOK_PROCESSING
+  AI_REPLY_GENERATION
+  AUTOMATION_RULE_EXECUTION
+  SCHEDULED_POST_PUBLISH
+  RETRY_FAILED_SEND
+  TOKEN_EXPIRATION
+  TOKEN_MONTHLY_CREDIT
+}
+
+enum action_usage_logs_platform_type {
+  FACEBOOK_PAGE
+  WHATSAPP
+}
+
+enum ai_agents_status {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum ai_knowledge_sources_status {
+  DRAFT
+  READY
+  PROCESSING
+  ARCHIVED
+}
+
+enum billing_transactions_status {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CANCELED
+}
+
+enum conversations_status {
+  OPEN
+  ASSIGNED
+  PAUSED
+  RESOLVED
+  ESCALATED
+}
+
+enum facebook_comment_replies_reply_status {
+  DRAFT
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum facebook_comments_status {
+  PENDING
+  REPLIED
+  IGNORED
+  FLAGGED
+  NEED_REVIEW
+}
+
+enum messages_direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum token_ledger_entry_type {
+  CREDIT
+  DEBIT
+  RESERVE
+  RELEASE
+  EXPIRE
+  ADJUSTMENT
+}
+
+enum automation_workflows_status {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum messages_delivery_status {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum token_ledger_source_type {
+  SUBSCRIPTION
+  TOKEN_PACKAGE
+  AI_USAGE
+  ADMIN
+  EXPIRATION
+}
+
+enum automation_workflows_trigger_type {
+  INBOX_MESSAGE_RECEIVED
+  FACEBOOK_COMMENT_CREATED
+  SCHEDULED_DAILY
+}
+
+enum automation_workflows_action_type {
+  GENERATE_INBOX_REPLY
+  GENERATE_COMMENT_REPLY
+  GENERATE_POST_DRAFT
+}
+
+enum social_posts_platform_type {
+  FACEBOOK_PAGE
+  WHATSAPP
+}
+
+enum social_posts_status {
+  DRAFT
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  REJECTED
+}
+
+enum social_posts_generated_by {
+  HUMAN_ADMIN
+  LLM_BOT
+  SYSTEM
+}
+
+enum token_ledger_allocation_type {
+  MONTHLY_FREE
+  PURCHASED
+  MANUAL
+}
