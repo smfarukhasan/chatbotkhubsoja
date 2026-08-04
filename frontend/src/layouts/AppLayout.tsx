@@ -34,6 +34,7 @@ const NAV_SECTIONS = [
       { to: "/inbox/facebook", label: "Facebook Inbox", featurePermission: "feature:facebook_inbox" },
       { to: "/comments", label: "Facebook Comments", featurePermission: "feature:facebook_comments" },
       { to: "/posts", label: "Facebook Posts", featurePermission: "feature:facebook_posts" },
+      { to: "/products", label: "Products" },
       { to: "/automation", label: "Automation" },
       { to: "/connections", label: "Channels" },
     ],

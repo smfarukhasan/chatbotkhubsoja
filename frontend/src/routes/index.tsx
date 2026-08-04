@@ -25,6 +25,7 @@ import { FacebookLiveInboxPage } from "../pages/FacebookLiveInboxPage";
 import { InboxPage } from "../pages/InboxPage";
 import { PostEditorPage } from "../pages/PostEditorPage";
 import { PostsPage } from "../pages/PostsPage";
+import { ProductsPage } from "../pages/ProductsPage";
 import { SetupWizardPage } from "../pages/SetupWizardPage";
 import { TeamPage } from "../pages/TeamPage";
 import { TokenPackagesPage } from "../pages/TokenPackagesPage";
@@ -129,6 +130,10 @@ export const router = createBrowserRouter([
           {
             path: "posts/:postId",
             element: <PostEditorPage />,
+          },
+          {
+            path: "products",
+            element: <ProductsPage />,
           },
           {
             path: "ai",
