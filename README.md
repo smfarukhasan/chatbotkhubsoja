@@ -73,7 +73,7 @@ Express 4 + TypeScript API with Prisma ORM (MySQL), BullMQ + Redis queues, JWT a
 - `src/core/security.ts`: JWT access/refresh tokens, bcryptjs password hashing
 - `src/middlewares/auth.ts`: JWT auth middleware (`requireUser`)
 - `src/services/platform_connection_service.ts`: platform connection lifecycle
-- `src/services/llm_service.ts`: LLM completion service (OpenAI provider with internal deterministic fallback, FAQ matching, style-example retrieval, token/cost accounting)
+- `src/services/llm_service.ts`: LLM completion service (OpenAI provider with internal deterministic fallback, FAQ matching, style-example retrieval, customer-intent classification, token/cost accounting)
 - `src/integrations/facebook`: Graph API client, OAuth session storage, connection service
 - `src/integrations/whatsapp`: Cloud API client + connection service
 - `src/workers/queues.ts`: BullMQ queue definitions (webhooks, sync, messages, comments, posts, maintenance, default)
@@ -246,14 +246,16 @@ Implemented business rules:
 - `POST /api/v1/ai/faq`
 - `PUT /api/v1/ai/faq/:faqId`
 - `POST /api/v1/ai/generation/inbox-reply`
+- `POST /api/v1/ai/generation/evaluate-intent`
 - `POST /api/v1/ai/generation/comment-reply`
 - `POST /api/v1/ai/generation/post`
 
 Implemented business rules:
 
-- Account-scoped AI agents, prompts (typed: `system_instruction` / `inbox_reply` / `comment_reply` / `post_generation`), knowledge sources, and FAQ entries
+- Account-scoped AI agents, prompts (typed: `system_instruction` / `inbox_reply` / `comment_reply` / `post_generation` / `intent_policy`), knowledge sources, and FAQ entries
 - Prompt resolution precedence: `agent+connection` → `connection` → `agent` → account-global (per prompt type)
 - **Generation endpoints** compose context (resolved prompt, conversation history / comment / title hint, FAQ knowledge base) and call the LLM service; responses carry token usage, prompt scope, and draft references
+- **Customer intent evaluation**: inbox-reply generation first classifies the conversation tail (last ~20 messages / ~2000 chars) as `purchase` / `casual` / `not_permitted` (`evaluateCustomerIntent` — OpenAI strict-JSON, with a deterministic Bangla/English keyword-heuristic fallback) against the owner's `INTENT_POLICY` prompt (resolved with the standard precedence; a safe default applies until configured). Replies then route by intent: `purchase` → sales steering; `casual` → concise steering; `not_permitted` at confidence ≥ 0.8 → fixed refusal template with the LLM skipped (zero token cost, cannot be talked around); below 0.8 → LLM-phrased polite decline with the policy. The evaluation is cached in `conversations.metadata_json` (`intent_eval`) and returned on the reply; `POST /api/v1/ai/generation/evaluate-intent` runs the classifier standalone without replying
 - **Conversation style training**: `POST /ai/knowledge-sources/from-conversations` lets users select real inbox conversations (frontend `/ai/style` page); the backend extracts `Customer → Owner` reply pairs (a `CUSTOMER`/`INBOUND` message followed by the next `HUMAN_ADMIN`/`OUTBOUND` reply; `LLM_BOT`/`SYSTEM` excluded), max 5 pairs per conversation, and stores them as `conversation_style` knowledge rows (no schema change — reuses `ai_knowledge_sources` with `metadata_json.kind`); re-training a conversation is idempotent (updates the existing row)
 - At generation time the top-3 style examples are retrieved by keyword overlap (Bengali-aware tokenizer) and injected with a "match this tone of voice" instruction — RAG retrieval, so token cost stays flat regardless of trained-conversation count (style imitation, not fine-tuning)
 - Generation can persist drafts and, when `send_now` is set, publish real replies to Messenger / comment threads via the Graph API (recording `SENT` / `FAILED` states); a sent inbox reply auto-pauses AI chat for 15 minutes

@@ -3,7 +3,7 @@
 > Repo: `chatbotkhubsoja`
 > Analyzed: `backend_js/` (live backend)
 > Date: 2026-08-04
-> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`); added conversation style training (`POST /knowledge-sources/from-conversations` + `findStyleExamples` RAG retrieval)
+> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`); added conversation style training (`POST /knowledge-sources/from-conversations` + `findStyleExamples` RAG retrieval); added customer intent evaluation (`INTENT_POLICY` prompt type + `evaluateCustomerIntent`)
 
 ## Overview
 
@@ -71,7 +71,7 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 
 ### AI Configuration (`/ai`)
 - Agents: `GET/POST /agents`, `GET/PUT /agents/:agentId` (status: draft / active / paused / archived)
-- Prompts: `GET/POST /prompts`, `PUT /prompts/:promptId` — typed (`system_instruction` / `inbox_reply` / `comment_reply` / `post_generation`), version bumped on content change
+- Prompts: `GET/POST /prompts`, `PUT /prompts/:promptId` — typed (`system_instruction` / `inbox_reply` / `comment_reply` / `post_generation` / `intent_policy`), version bumped on content change
 - Prompt resolution: `GET /prompts/resolve/current` resolves the active prompt per type with precedence `agent+connection` → `connection` → `agent` → account-global
 - Knowledge sources: `GET/POST /knowledge-sources`, `PUT /knowledge-sources/:sourceId`, `DELETE /knowledge-sources/:sourceId`; `GET` accepts `?kind=conversation_style`
 - **Conversation style training**: `POST /knowledge-sources/from-conversations` — the user selects real inbox conversations; the backend extracts `Customer → Owner` reply pairs (a `CUSTOMER`/`INBOUND` message followed by the next `HUMAN_ADMIN`/`OUTBOUND` reply; `LLM_BOT`/`SYSTEM` replies never qualify), max 5 pairs per conversation, ~300 chars per message, stored as a `conversation_style` knowledge row (reuses `ai_knowledge_sources` with `source_type=TEXT` + `metadata_json.kind` — no schema change); re-running a conversation idempotently re-trains (UPDATE) instead of duplicating
@@ -79,12 +79,14 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 - Account-scoped; enum-ish fields lowercased in responses to match the frontend contract
 
 ### AI Generation (`/ai/generation`)
-- `POST /inbox-reply` — composes resolved prompt + conversation history + FAQ knowledge, calls the LLM service; optional `send_now` publishes a real Messenger reply via Graph API (records `SENT`/`FAILED`, auto-pauses AI chat 15 min), optional `persist_draft` stores an `LLM_BOT` outbound draft
+- `POST /inbox-reply` — composes resolved prompt + conversation history + FAQ knowledge, calls the LLM service; optional `send_now` publishes a real Messenger reply via Graph API (records `SENT`/`FAILED`, auto-pauses AI chat 15 min), optional `persist_draft` stores an `LLM_BOT` outbound draft; **routes by customer intent** — `purchase` (sales steering), `casual` (concise steering), `not_permitted` at confidence ≥ 0.8 returns a fixed refusal template with the LLM skipped (zero token cost, `routed_by: 'intent_policy'`), below 0.8 an LLM-phrased polite decline with the policy; the response carries `intent_eval: { intent, confidence, reason }` and the evaluation is cached in `conversations.metadata_json`
+- `POST /evaluate-intent` — standalone classifier: scores the last-20-message tail (~2000 chars) against the resolved `INTENT_POLICY`, returns `{ intent, confidence, reason, evaluated_at, tail_used }` and caches `intent_eval` on the conversation (no reply generated)
 - `POST /comment-reply` — same pattern for comments; `send_now` publishes via Graph API, updates comment to `replied`, stores `facebook_comment_replies` row; `persist_draft` writes `ai_draft_reply` on the comment
 - `POST /post` — generates post content (`POST_GENERATION`); `persist_draft` creates/updates a `social_posts` draft (`is_llm_generated`, `requires_approval`)
 - Every completion logs to `llm_token_usage` and `action_usage_logs` (tokens + estimated cost)
 - Backed by `src/services/llm_service.ts`: OpenAI provider when `LLM_DEFAULT_PROVIDER=openai` + `OPENAI_API_KEY` set, otherwise a deterministic internal fallback (`internal-reply-model-v1`) with FAQ keyword matching; cost estimate recorded per call
 - Generation context also injects **top-3 style examples** (`findStyleExamples`, keyword-overlap scoring with the Bengali-aware tokenizer, mirroring FAQ matching) with a "match this tone of voice" instruction — RAG-style retrieval so token cost stays flat regardless of how many conversations were trained
+- Intent classification runs before generation: `evaluateCustomerIntent` (OpenAI strict-JSON at temperature 0, validated, with a deterministic Bangla/English keyword-heuristic fallback whose confidence derives from the top-category score margin); the `INTENT_POLICY` prompt resolves with the standard precedence and a safe default policy applies until the owner configures one
 
 ### Billing (`/billing`)
 - Plans: `GET /plans`, `GET /features` (feature catalog)
@@ -119,4 +121,4 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 
 - **No worker process** — only BullMQ queue definitions exist; nothing consumes them, so queued webhook events and automation `sync_jobs` are stored but never processed (no AI reply generation in background, no scheduled publishing, no delivery retries). AI generation currently runs synchronously inside the `/ai/generation/*` request handlers.
 
-> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes. Conversation style training was added the same day (`POST /ai/knowledge-sources/from-conversations`, `findStyleExamples` retrieval, frontend `/ai/style` page).
+> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes. Conversation style training was added the same day (`POST /ai/knowledge-sources/from-conversations`, `findStyleExamples` retrieval, frontend `/ai/style` page), followed by customer intent evaluation (`INTENT_POLICY` prompt type, `evaluateCustomerIntent`, `/ai/generation/evaluate-intent`).
