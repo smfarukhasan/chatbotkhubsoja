@@ -23,3 +23,9 @@ node_modules/
 backend/.venv/
 dist/
 frontend/dist/
+
+# Editor swap files
+*.kate-swp
+
+# OpenCode agent runtime state
+.omo/
