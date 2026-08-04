@@ -406,6 +406,9 @@ aiRouter.get('/knowledge-sources', requireUser, async (req: AuthenticatedRequest
     if (aiAgentId) {
       where.ai_agent_id = aiAgentId;
     }
+    if (req.query.kind === 'conversation_style') {
+      where.metadata_json = { path: '$.kind', equals: 'conversation_style' };
+    }
 
     const items = await prisma.ai_knowledge_sources.findMany({
       where,
@@ -413,6 +416,106 @@ aiRouter.get('/knowledge-sources', requireUser, async (req: AuthenticatedRequest
     });
 
     return res.json(items.map(knowledgeResponse));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 9b. POST /knowledge-sources/from-conversations  (registered before the generic /knowledge-sources routes)
+const fromConversationsSchema = z.object({
+  conversation_ids: z.array(z.number().int().positive()).min(1),
+  ai_agent_id: z.number().int().positive().optional().nullable(),
+});
+
+const truncateText = (text: string, maxLength: number): string => {
+  const trimmed = (text || '').trim();
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}...` : trimmed;
+};
+
+aiRouter.post('/knowledge-sources/from-conversations', requireUser, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const accountId = getAccountId(req);
+    const payload = fromConversationsSchema.parse(req.body);
+
+    const items: any[] = [];
+    let skipped = 0;
+
+    for (const conversationId of payload.conversation_ids) {
+      const conversation = await prisma.conversations.findFirst({
+        where: { id: conversationId, account_id: accountId },
+      });
+      if (!conversation) {
+        skipped += 1;
+        continue;
+      }
+
+      const messages = await prisma.messages.findMany({
+        where: { conversation_id: conversationId, account_id: accountId },
+        orderBy: { created_at: 'asc' },
+      });
+
+      // CUSTOMER message followed by a HUMAN_ADMIN OUTBOUND reply = one style pair (owner's tone); LLM_BOT/SYSTEM replies never qualify.
+      const pairs: string[] = [];
+      for (let i = 0; i < messages.length - 1 && pairs.length < 5; i++) {
+        const customerMsg = messages[i];
+        if (customerMsg.sender_type !== 'CUSTOMER' || customerMsg.direction !== 'INBOUND') continue;
+        const ownerReply = messages[i + 1];
+        if (ownerReply.sender_type !== 'HUMAN_ADMIN' || ownerReply.direction !== 'OUTBOUND') continue;
+        pairs.push(
+          `Customer: ${truncateText(customerMsg.content, 300)}\nOwner: ${truncateText(ownerReply.content, 300)}`
+        );
+        i += 1;
+      }
+
+      if (pairs.length === 0) continue;
+
+      const title = `Style examples — ${conversation.customer_name || conversation.customer_external_id}`;
+      const contentText = pairs.join('\n\n');
+      const metadata = {
+        kind: 'conversation_style',
+        conversation_id: conversationId,
+        customer_name: conversation.customer_name,
+        pair_count: pairs.length,
+      };
+
+      const existing = await prisma.ai_knowledge_sources.findFirst({
+        where: {
+          account_id: accountId,
+          AND: [
+            { metadata_json: { path: '$.kind', equals: 'conversation_style' } },
+            { metadata_json: { path: '$.conversation_id', equals: conversationId } },
+          ],
+        },
+      });
+
+      const row = existing
+        ? await prisma.ai_knowledge_sources.update({
+            where: { id: existing.id },
+            data: {
+              title,
+              source_type: 'TEXT' as any,
+              status: 'READY' as any,
+              ai_agent_id: payload.ai_agent_id ?? null,
+              content_text: contentText,
+              metadata_json: metadata,
+            },
+          })
+        : await prisma.ai_knowledge_sources.create({
+            data: {
+              account_id: accountId,
+              title,
+              source_type: 'TEXT' as any,
+              status: 'READY' as any,
+              ai_agent_id: payload.ai_agent_id ?? null,
+              content_text: contentText,
+              metadata_json: metadata,
+            },
+          });
+
+      items.push(row);
+    }
+
+    return res.status(201).json({ items: items.map(knowledgeResponse), skipped });
   } catch (err) {
     next(err);
   }
@@ -510,6 +613,31 @@ aiRouter.put('/knowledge-sources/:sourceId', requireUser, async (req: Authentica
     });
 
     return res.json(knowledgeResponse(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 11b. DELETE /knowledge-sources/:sourceId
+aiRouter.delete('/knowledge-sources/:sourceId', requireUser, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const accountId = getAccountId(req);
+    const sourceId = parseInt(req.params.sourceId, 10);
+    if (isNaN(sourceId)) {
+      throw new BadRequestError('Invalid knowledge source ID.');
+    }
+
+    const source = await prisma.ai_knowledge_sources.findFirst({
+      where: { id: sourceId, account_id: accountId },
+    });
+
+    if (!source) {
+      throw new NotFoundError('Knowledge source not found.');
+    }
+
+    await prisma.ai_knowledge_sources.delete({ where: { id: source.id } });
+
+    return res.status(204).end();
   } catch (err) {
     next(err);
   }

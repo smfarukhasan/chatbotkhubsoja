@@ -49,9 +49,31 @@ export async function resolvePrompts(params: { ai_agent_id?: number; platform_co
   return response.data;
 }
 
-export async function listKnowledgeSources(params: { ai_agent_id?: number } = {}): Promise<AIKnowledgeSource[]> {
+export async function listKnowledgeSources(
+  params: { ai_agent_id?: number; kind?: string } = {},
+): Promise<AIKnowledgeSource[]> {
   const response = await apiClient.get<AIKnowledgeSource[]>("/ai/knowledge-sources", { params });
   return response.data;
+}
+
+export type CreateConversationStyleExamplesResponse = {
+  items: AIKnowledgeSource[];
+  skipped: number;
+};
+
+export async function createConversationStyleExamples(
+  conversationIds: number[],
+  aiAgentId?: number | null,
+): Promise<CreateConversationStyleExamplesResponse> {
+  const response = await apiClient.post<CreateConversationStyleExamplesResponse>("/ai/knowledge-sources/from-conversations", {
+    conversation_ids: conversationIds,
+    ai_agent_id: aiAgentId ?? null,
+  });
+  return response.data;
+}
+
+export async function deleteKnowledgeSource(sourceId: number): Promise<void> {
+  await apiClient.delete(`/ai/knowledge-sources/${sourceId}`);
 }
 
 export async function createKnowledgeSource(payload: Record<string, unknown>): Promise<AIKnowledgeSource> {

@@ -55,6 +55,12 @@ const capitalize = (value: string): string => {
 
 const roundTo6 = (value: number): number => Math.round(value * 1e6) / 1e6;
 
+const truncateText = (text: string, maxLength: number): string => {
+  if (!text) return '';
+  const trimmed = text.trim();
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}...` : trimmed;
+};
+
 async function findFaqMatches(accountId: number, aiAgentId: number | null | undefined, promptText: string): Promise<any[]> {
   const where: any = { account_id: accountId, is_active: true };
   if (aiAgentId) {
@@ -66,6 +72,26 @@ async function findFaqMatches(accountId: number, aiAgentId: number | null | unde
   });
   return faqRows
     .map((row) => ({ row, score: keywordOverlap(promptText, row.question) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((entry) => entry.row);
+}
+
+async function findStyleExamples(accountId: number, aiAgentId: number | null | undefined, promptText: string): Promise<any[]> {
+  const where: any = {
+    account_id: accountId,
+    metadata_json: { path: '$.kind', equals: 'conversation_style' },
+  };
+  if (aiAgentId) {
+    where.ai_agent_id = aiAgentId;
+  }
+  const styleRows = await prisma.ai_knowledge_sources.findMany({
+    where,
+    take: 100,
+  });
+  return styleRows
+    .map((row) => ({ row, score: keywordOverlap(promptText, row.title) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 3)
@@ -126,6 +152,7 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
     ? await prisma.ai_agents.findFirst({ where: { id: aiAgentId, account_id: accountId } })
     : null;
   const faqMatches = await findFaqMatches(accountId, aiAgentId, promptText);
+  const styleExamples = await findStyleExamples(accountId, aiAgentId, promptText);
 
   const contextParts: string[] = [];
   if (instructions && instructions.trim()) {
@@ -139,6 +166,9 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
   }
   if (faqMatches.length > 0) {
     contextParts.push(`Knowledge base:\n${faqMatches.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}`);
+  }
+  if (styleExamples.length > 0) {
+    contextParts.push(`Style examples (match this tone of voice):\n${styleExamples.map((s) => truncateText(s.content_text || '', 600)).join('\n\n')}`);
   }
   const composedPrompt = contextParts.join('\n\n');
 

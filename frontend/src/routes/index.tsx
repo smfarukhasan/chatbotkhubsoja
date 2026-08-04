@@ -10,6 +10,7 @@ import { AIAgentsPage } from "../pages/AIAgentsPage";
 import { AIFAQPage } from "../pages/AIFAQPage";
 import { AIKnowledgePage } from "../pages/AIKnowledgePage";
 import { AIOverviewPage } from "../pages/AIOverviewPage";
+import { AIStyleExamplesPage } from "../pages/AIStyleExamplesPage";
 import { AutomationWorkflowsPage } from "../pages/AutomationWorkflowsPage";
 import { AIPromptsPage } from "../pages/AIPromptsPage";
 import { AuditLogPage } from "../pages/AuditLogPage";
@@ -144,6 +145,10 @@ export const router = createBrowserRouter([
           {
             path: "ai/knowledge",
             element: <AIKnowledgePage />,
+          },
+          {
+            path: "ai/style",
+            element: <AIStyleExamplesPage />,
           },
           {
             path: "ai/faq",

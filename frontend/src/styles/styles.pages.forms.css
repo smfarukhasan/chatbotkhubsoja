@@ -128,6 +128,75 @@
   line-height: 1.1;
 }
 
+.form-panel > h3.ai-style-form-title {
+  margin-top: 0;
+  margin-bottom: 4px;
+  padding-top: 0;
+  padding-bottom: 8px;
+  text-align: center;
+}
+
+.ai-style-form > .ai-style-form-title,
+.ai-style-form > .ai-style-conversation-list,
+.ai-style-form > button.ai-style-train-button {
+  grid-column: 1 / -1;
+}
+
+.form-panel.connection-form button.ai-style-train-button {
+  min-height: 32px;
+  height: 32px;
+  padding: 4px 10px;
+  border-radius: 10px !important;
+  font-size: 0.84rem;
+  line-height: 1.1;
+}
+
+.ai-style-conversation-list {
+  display: grid;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.ai-style-conversation-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid rgba(181, 212, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ai-style-conversation-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.form-panel label.ai-style-conversation-copy {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  gap: 0;
+  cursor: pointer;
+}
+
+.ai-style-conversation-copy strong,
+.ai-style-conversation-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-style-row-empty {
+  padding: 10px 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
 .form-panel > h3.ai-faq-form-title {
   margin-top: 0;
   margin-bottom: 4px;

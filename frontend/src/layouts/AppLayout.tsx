@@ -45,6 +45,7 @@ const NAV_SECTIONS = [
       { to: "/ai/agents", label: "AI Agents" },
       { to: "/ai/prompts", label: "Prompts" },
       { to: "/ai/knowledge", label: "Knowledge" },
+      { to: "/ai/style", label: "Style" },
       { to: "/ai/faq", label: "FAQs" },
     ],
   },

@@ -3,7 +3,7 @@
 > Repo: `chatbotkhubsoja`
 > Analyzed: `backend_js/` (live backend)
 > Date: 2026-08-04
-> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`)
+> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`); added conversation style training (`POST /knowledge-sources/from-conversations` + `findStyleExamples` RAG retrieval)
 
 ## Overview
 
@@ -73,7 +73,8 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 - Agents: `GET/POST /agents`, `GET/PUT /agents/:agentId` (status: draft / active / paused / archived)
 - Prompts: `GET/POST /prompts`, `PUT /prompts/:promptId` — typed (`system_instruction` / `inbox_reply` / `comment_reply` / `post_generation`), version bumped on content change
 - Prompt resolution: `GET /prompts/resolve/current` resolves the active prompt per type with precedence `agent+connection` → `connection` → `agent` → account-global
-- Knowledge sources: `GET/POST /knowledge-sources`, `PUT /knowledge-sources/:sourceId`
+- Knowledge sources: `GET/POST /knowledge-sources`, `PUT /knowledge-sources/:sourceId`, `DELETE /knowledge-sources/:sourceId`; `GET` accepts `?kind=conversation_style`
+- **Conversation style training**: `POST /knowledge-sources/from-conversations` — the user selects real inbox conversations; the backend extracts `Customer → Owner` reply pairs (a `CUSTOMER`/`INBOUND` message followed by the next `HUMAN_ADMIN`/`OUTBOUND` reply; `LLM_BOT`/`SYSTEM` replies never qualify), max 5 pairs per conversation, ~300 chars per message, stored as a `conversation_style` knowledge row (reuses `ai_knowledge_sources` with `source_type=TEXT` + `metadata_json.kind` — no schema change); re-running a conversation idempotently re-trains (UPDATE) instead of duplicating
 - FAQ: `GET/POST /faq`, `PUT /faq/:faqId` (tags, `is_active`)
 - Account-scoped; enum-ish fields lowercased in responses to match the frontend contract
 
@@ -83,6 +84,7 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 - `POST /post` — generates post content (`POST_GENERATION`); `persist_draft` creates/updates a `social_posts` draft (`is_llm_generated`, `requires_approval`)
 - Every completion logs to `llm_token_usage` and `action_usage_logs` (tokens + estimated cost)
 - Backed by `src/services/llm_service.ts`: OpenAI provider when `LLM_DEFAULT_PROVIDER=openai` + `OPENAI_API_KEY` set, otherwise a deterministic internal fallback (`internal-reply-model-v1`) with FAQ keyword matching; cost estimate recorded per call
+- Generation context also injects **top-3 style examples** (`findStyleExamples`, keyword-overlap scoring with the Bengali-aware tokenizer, mirroring FAQ matching) with a "match this tone of voice" instruction — RAG-style retrieval so token cost stays flat regardless of how many conversations were trained
 
 ### Billing (`/billing`)
 - Plans: `GET /plans`, `GET /features` (feature catalog)
@@ -117,4 +119,4 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 
 - **No worker process** — only BullMQ queue definitions exist; nothing consumes them, so queued webhook events and automation `sync_jobs` are stored but never processed (no AI reply generation in background, no scheduled publishing, no delivery retries). AI generation currently runs synchronously inside the `/ai/generation/*` request handlers.
 
-> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes.
+> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes. Conversation style training was added the same day (`POST /ai/knowledge-sources/from-conversations`, `findStyleExamples` retrieval, frontend `/ai/style` page).
