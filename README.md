@@ -67,12 +67,13 @@ npm run dev
 
 Express 4 + TypeScript API with Prisma ORM (MySQL), BullMQ + Redis queues, JWT auth, and Zod validation.
 
-- `src/api/v1/endpoints`: versioned route handlers (auth, users, accounts, platform-connections, webhooks, inbox, comments, posts, health)
+- `src/api/v1/endpoints`: versioned route handlers (auth, users, accounts, platform-connections, webhooks, inbox, comments, posts, AI, billing, automation, observability, reports, health)
 - `src/config/settings.ts`: Zod-validated environment settings with production guardrails
 - `src/core`: Prisma client, error envelope + centralized error handler, Winston logging
 - `src/core/security.ts`: JWT access/refresh tokens, bcryptjs password hashing
 - `src/middlewares/auth.ts`: JWT auth middleware (`requireUser`)
 - `src/services/platform_connection_service.ts`: platform connection lifecycle
+- `src/services/llm_service.ts`: LLM completion service (OpenAI provider with internal deterministic fallback, FAQ matching, token/cost accounting)
 - `src/integrations/facebook`: Graph API client, OAuth session storage, connection service
 - `src/integrations/whatsapp`: Cloud API client + connection service
 - `src/workers/queues.ts`: BullMQ queue definitions (webhooks, sync, messages, comments, posts, maintenance, default)
@@ -226,16 +227,89 @@ Implemented business rules:
 
 - `GET /api/v1/health` — API + database status (`200 ok` / `500 degraded`)
 
+### AI Configuration and Generation
+
+- `GET /api/v1/ai/agents`
+- `GET /api/v1/ai/agents/:agentId`
+- `POST /api/v1/ai/agents`
+- `PUT /api/v1/ai/agents/:agentId`
+- `GET /api/v1/ai/prompts`
+- `POST /api/v1/ai/prompts`
+- `GET /api/v1/ai/prompts/resolve/current`
+- `PUT /api/v1/ai/prompts/:promptId`
+- `GET /api/v1/ai/knowledge-sources`
+- `POST /api/v1/ai/knowledge-sources`
+- `PUT /api/v1/ai/knowledge-sources/:sourceId`
+- `GET /api/v1/ai/faq`
+- `POST /api/v1/ai/faq`
+- `PUT /api/v1/ai/faq/:faqId`
+- `POST /api/v1/ai/generation/inbox-reply`
+- `POST /api/v1/ai/generation/comment-reply`
+- `POST /api/v1/ai/generation/post`
+
+Implemented business rules:
+
+- Account-scoped AI agents, prompts (typed: `system_instruction` / `inbox_reply` / `comment_reply` / `post_generation`), knowledge sources, and FAQ entries
+- Prompt resolution precedence: `agent+connection` → `connection` → `agent` → account-global (per prompt type)
+- **Generation endpoints** compose context (resolved prompt, conversation history / comment / title hint, FAQ knowledge base) and call the LLM service; responses carry token usage, prompt scope, and draft references
+- Generation can persist drafts and, when `send_now` is set, publish real replies to Messenger / comment threads via the Graph API (recording `SENT` / `FAILED` states); a sent inbox reply auto-pauses AI chat for 15 minutes
+- `src/services/llm_service.ts` routes to OpenAI (`LLM_DEFAULT_PROVIDER=openai` + `OPENAI_API_KEY`) with a deterministic internal fallback (`internal-reply-model-v1`), logs every completion to `llm_token_usage` and `action_usage_logs`
+
+### Billing
+
+- `GET /api/v1/billing/plans`
+- `GET /api/v1/billing/features`
+- `GET /api/v1/billing/subscription`
+- `POST /api/v1/billing/subscription`
+- `PUT /api/v1/billing/subscription`
+- `GET /api/v1/billing/wallet`
+- `GET /api/v1/billing/transactions`
+- `GET /api/v1/billing/token-ledger`
+- `GET /api/v1/billing/token-packages`
+- `POST /api/v1/billing/token-packages`
+- `POST /api/v1/billing/token-purchases`
+
+Implemented business rules:
+
+- Account-scoped plans, feature catalog, and subscription management (subscription tracks plan code + status, snapshots plan features)
+- Token wallet balance, ledger entries, transactions, and purchasable token packages
+- Token-package purchase credits the account wallet and records a billing transaction
+
+### Automation Workflows
+
+- `GET /api/v1/automation/workflows`
+- `POST /api/v1/automation/workflows`
+- `PUT /api/v1/automation/workflows/:workflowId`
+- `DELETE /api/v1/automation/workflows/:workflowId`
+- `POST /api/v1/automation/workflows/:workflowId/run`
+
+Implemented business rules:
+
+- Account-scoped workflows with trigger/action config, schedule, and status lifecycle
+- Manual run creates a `sync_job` (`AUTOMATION_RULE_EXECUTION`, `PENDING`) and returns `{ workflow, sync_job_id }`; `scheduled_daily` triggers recompute `next_run_at` to the next occurrence
+
+### Observability and Reports
+
+- `GET /api/v1/observability/action-usage-logs`
+- `GET /api/v1/observability/llm-token-usage`
+- `GET /api/v1/observability/audit-logs`
+- `GET /api/v1/reports/dashboard-summary`
+- `GET /api/v1/reports/token-usage-summary`
+- `GET /api/v1/reports/billing-summary`
+- `GET /api/v1/reports/conversation-stats`
+- `GET /api/v1/reports/comment-stats`
+- `GET /api/v1/reports/post-stats`
+
+Implemented business rules:
+
+- Paginated observability logs (`{ items, total, page, page_size }`) with lowercased enum fields
+- Report summaries aggregate LLM token usage, action costs, wallet/subscription state, and conversation/comment/post stats with zero-filled 7/14-day daily buckets
+
 ## Not Yet Implemented
 
 These features exist in the frontend and in the archived Python backend, but the Express backend does **not** yet expose routes for them. Frontend pages calling these APIs will fail until the routes are added:
 
-- **AI configuration** — agents, prompts, knowledge sources, FAQ (`/api/v1/ai/*`)
-- **AI generation** — inbox reply / comment reply / post generation
-- **Billing** — plans, subscriptions, token wallet, token packages, transactions (`/api/v1/billing/*`)
-- **Automation workflows** (`/api/v1/automation/workflows`)
-- **Observability & reports** — action usage, LLM token usage, audit logs, dashboard/report summaries (`/api/v1/observability/*`, `/api/v1/reports/*`)
-- **Background workers** — BullMQ queues are defined (`webhooks`, `sync`, `messages`, `comments`, `posts`, `maintenance`, `default`) but no worker process consumes them yet; webhook events are stored but not processed
+- **Background workers** — BullMQ queues are defined (`webhooks`, `sync`, `messages`, `comments`, `posts`, `maintenance`, `default`) but no worker process consumes them yet; webhook events and queued sync jobs are stored but not processed
 
 ## Database and Queue Notes
 
@@ -243,7 +317,7 @@ These features exist in the frontend and in the archived Python backend, but the
 - Schema sync: `npx prisma db push` (no migration history committed yet)
 - BullMQ uses Redis as the queue broker (7 queues defined, 3 attempts, exponential backoff)
 - Multi-tenant through `accounts` + `memberships`, with `X-Account-ID` request context
-- Schema includes forward-looking tables for AI config, billing/subscriptions, token wallets/ledger, RBAC (`roles`/`permissions`), and observability — matching the archived Python backend, ready for future migration
+- Schema includes tables for AI config, billing/subscriptions, token wallets/ledger, RBAC (`roles`/`permissions`), and observability — used by the AI, billing, automation, observability, and reports routes
 
 ## Facebook Page Integration Setup
 
@@ -432,8 +506,7 @@ make docker-down
 
 ## Next Milestones
 
-- Add the missing `/api/v1/ai/*`, `/api/v1/billing/*`, `/api/v1/automation/*`, `/api/v1/observability/*`, and `/api/v1/reports/*` routes to match the frontend and the archived Python backend
-- Implement a BullMQ worker to process webhook events, AI reply generation, scheduled publishing, and delivery retries
+- Implement a BullMQ worker to process webhook events, AI reply generation, scheduled publishing, automation workflow runs, and delivery retries
 - Real provider-backed LLM pricing and token reconciliation
 - Delivery status reconciliation and retry policies for Facebook/WhatsApp outbound sends
 - Media attachment support for Messenger and Page publishing
