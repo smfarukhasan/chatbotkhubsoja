@@ -78,6 +78,7 @@ const baseSchema = z.object({
   openai_api_key: z.string().default(''),
   llm_default_provider: z.string().default('internal'),
   llm_default_model: z.string().default('internal-reply-model-v1'),
+  public_base_url: z.string().default(''),
 
   owner_email: z.string().default('admin@khubsoja.com'),
   owner_password: z.string().default('12331233'),
@@ -159,6 +160,7 @@ export class SafeSettings {
   get openai_api_key() { return this.config.openai_api_key; }
   get llm_default_provider() { return this.config.llm_default_provider; }
   get llm_default_model() { return this.config.llm_default_model; }
+  get public_base_url() { return this.config.public_base_url; }
   get owner_email() { return this.config.owner_email; }
   get owner_password() { return this.config.owner_password; }
   get owner_full_name() { return this.config.owner_full_name; }

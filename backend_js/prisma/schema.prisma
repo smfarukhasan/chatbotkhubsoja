@@ -72,6 +72,7 @@ model Account {
   messages                 messages[]
   onboardingKeys           OnboardingKey[]
   platformConnections      PlatformConnection[]
+  products                 products[]
   social_posts             social_posts[]
   sync_jobs                sync_jobs[]
   token_ledger             token_ledger[]
@@ -163,6 +164,7 @@ model PlatformConnection {
   conversations         conversations[]
   facebook_comments     facebook_comments[]
   llm_token_usage       llm_token_usage[]
+  products              products[]
   account               Account                @relation(fields: [accountId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_platform_connections_account_id_accounts")
   social_posts          social_posts[]
   sync_jobs             sync_jobs[]
@@ -837,6 +839,29 @@ model social_posts {
   @@index([rejected_by_user_id], map: "ix_social_posts_rejected_by_user_id")
   @@index([scheduled_for], map: "ix_social_posts_scheduled_for")
   @@index([status], map: "ix_social_posts_status")
+}
+
+model products {
+  id                     Int                    @id @default(autoincrement())
+  account_id             Int
+  platform_connection_id Int?
+  name                   String                 @db.VarChar(255)
+  description            String?                @db.Text
+  price                  Decimal?               @db.Decimal(10, 2)
+  currency               String?                @db.VarChar(10)
+  price_text             String?                @db.VarChar(100)
+  images                 Json
+  category               String?                @db.VarChar(100)
+  is_available           Boolean                @default(true)
+  created_at             DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  updated_at             DateTime               @default(dbgenerated("(now())")) @db.DateTime(0)
+  accounts               Account                @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_products_account_id_accounts")
+  platform_connections   PlatformConnection?    @relation(fields: [platform_connection_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_products_platform_connection_id_platform_connections")
+
+  @@index([account_id], map: "ix_products_account_id")
+  @@index([platform_connection_id], map: "ix_products_platform_connection_id")
+  @@index([account_id, platform_connection_id], map: "ix_products_account_id_platform_connection_id")
+  @@map("products")
 }
 
 model sync_jobs {

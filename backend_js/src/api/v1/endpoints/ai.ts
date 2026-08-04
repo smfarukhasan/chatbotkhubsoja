@@ -888,6 +888,7 @@ aiRouter.post('/generation/inbox-reply', requireUser, async (req: AuthenticatedR
         referenceId: String(conversation.id),
         instructions: [...baseInstructions, ...steeringInstructions].join('\n\n') || null,
         skipStyleExamples: intentEval.intent === 'not_permitted',
+        skipProducts: intentEval.intent === 'not_permitted',
       });
       content = completion.content;
     }

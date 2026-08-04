@@ -9,9 +9,13 @@ import { getSettings } from './config/settings.js';
 import { logger } from './core/logging.js';
 import { errorHandler } from './core/errors.js';
 import { apiRouter } from './api/router.js';
+import { ensureUploadDirs, UPLOADS_DIR } from './utils/uploads.js';
 
 const settings = getSettings();
 export const app = express();
+
+// Ensure upload storage directories exist on process boot.
+ensureUploadDirs();
 
 // Middleware: Request ID and performance logging
 app.use((req, res, next) => {
@@ -65,6 +69,9 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+
+// Static serving for uploaded files (e.g. product images at /uploads/products/<filename>)
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Prefix router
 app.use(settings.api_v1_prefix, apiRouter);

@@ -20,6 +20,7 @@ backend/.env
 frontend/.env
 frontend/node_modules/
 node_modules/
+backend_js/uploads/
 backend/.venv/
 dist/
 frontend/dist/

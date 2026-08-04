@@ -13,6 +13,7 @@ export interface GenerateCompletionOptions {
   referenceId?: string | null;
   instructions?: string | null;
   skipStyleExamples?: boolean;
+  skipProducts?: boolean;
 }
 
 export interface GenerateCompletionResult {
@@ -107,6 +108,23 @@ async function findStyleExamples(accountId: number, aiAgentId: number | null | u
     .map((entry) => entry.row);
 }
 
+export async function findProducts(accountId: number, platformConnectionId: number | null | undefined, promptText: string): Promise<any[]> {
+  const where: any = { account_id: accountId, is_available: true };
+  if (platformConnectionId) {
+    where.platform_connection_id = platformConnectionId;
+  }
+  const productRows = await prisma.products.findMany({
+    where,
+    take: 100,
+  });
+  return productRows
+    .map((row) => ({ row, score: keywordOverlap(promptText, `${row.name} ${row.category || ''} ${row.description || ''}`) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((entry) => entry.row);
+}
+
 function generateInternalContent(options: {
   promptType: string;
   promptText: string;
@@ -162,6 +180,7 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
     : null;
   const faqMatches = await findFaqMatches(accountId, aiAgentId, promptText);
   const styleExamples = options.skipStyleExamples ? [] : await findStyleExamples(accountId, aiAgentId, promptText);
+  const productMatches = options.skipProducts ? [] : await findProducts(accountId, platformConnectionId, promptText);
 
   const contextParts: string[] = [];
   if (instructions && instructions.trim()) {
@@ -175,6 +194,18 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
   }
   if (faqMatches.length > 0) {
     contextParts.push(`Knowledge base:\n${faqMatches.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}`);
+  }
+  if (productMatches.length > 0) {
+    contextParts.push(
+      `Product catalog (recommend ONLY from these; never invent prices or products; if the customer asks about something not listed, say it is not currently available):\n${productMatches
+        .map((p) => {
+          const priceText = p.price_text || (p.currency && p.price ? `${p.currency} ${p.price}` : null) || 'not listed';
+          const description = truncateText(p.description || '', 200);
+          const available = p.is_available ? 'yes' : 'no';
+          return `Product: ${p.name}\nPrice: ${priceText}\nDescription: ${description}\nAvailable: ${available}`;
+        })
+        .join('\n\n')}`
+    );
   }
   if (styleExamples.length > 0) {
     contextParts.push(`Style examples (match this tone of voice):\n${styleExamples.map((s) => truncateText(s.content_text || '', 600)).join('\n\n')}`);

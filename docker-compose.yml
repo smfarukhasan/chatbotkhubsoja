@@ -11,6 +11,7 @@ services:
     volumes:
       - ./backend_js:/app
       - /app/node_modules
+      - ./backend_js/uploads:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
