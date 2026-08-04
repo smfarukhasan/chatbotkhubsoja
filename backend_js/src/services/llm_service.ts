@@ -12,6 +12,7 @@ export interface GenerateCompletionOptions {
   referenceType?: string | null;
   referenceId?: string | null;
   instructions?: string | null;
+  skipStyleExamples?: boolean;
 }
 
 export interface GenerateCompletionResult {
@@ -22,6 +23,14 @@ export interface GenerateCompletionResult {
   completionTokens: number;
   totalTokens: number;
   estimatedCost: number;
+}
+
+export type CustomerIntent = 'purchase' | 'casual' | 'not_permitted';
+
+export interface IntentEvaluation {
+  intent: CustomerIntent;
+  confidence: number;
+  reason: string;
 }
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -152,7 +161,7 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
     ? await prisma.ai_agents.findFirst({ where: { id: aiAgentId, account_id: accountId } })
     : null;
   const faqMatches = await findFaqMatches(accountId, aiAgentId, promptText);
-  const styleExamples = await findStyleExamples(accountId, aiAgentId, promptText);
+  const styleExamples = options.skipStyleExamples ? [] : await findStyleExamples(accountId, aiAgentId, promptText);
 
   const contextParts: string[] = [];
   if (instructions && instructions.trim()) {
@@ -281,4 +290,214 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
     totalTokens,
     estimatedCost,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Customer-intent evaluation
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_INTENT_POLICY_TEXT =
+  'Do not promise discounts, free items, off-platform deals, credit, or anything not offered on the page; be honest about product details.';
+
+const INTENT_KEYWORDS: Record<CustomerIntent, string[]> = {
+  purchase: ['দাম', 'কত', 'অর্ডার', 'পাঠান', 'স্টক', 'ডেলিভারি', 'পেমেন্ট', 'বিক্রি', 'price', 'order', 'delivery', 'payment', 'stock', 'available'],
+  not_permitted: ['ফ্রি', 'দিস', 'বিনামূল্যে', 'ছাড়', 'কিস্তি', 'ধার', 'give me free', 'discount', 'borrow'],
+  casual: ['হ্যালো', 'কেমন', 'hello', 'hi', 'ki obosta'],
+};
+
+const INTENT_VALUES: CustomerIntent[] = ['purchase', 'casual', 'not_permitted'];
+
+const INTENT_LABELS: Record<CustomerIntent, string> = {
+  purchase: 'Purchase intent',
+  casual: 'Casual/small talk',
+  not_permitted: 'Not-permitted request',
+};
+
+function buildIntentSystemPrompt(policyText: string): string {
+  return [
+    'You are a customer-intent classifier for a business\'s social-media chat inbox. Classify the customer\'s overall intent from the conversation tail into exactly one category:',
+    '- "purchase": the customer genuinely wants to buy — asking about price, stock, order, payment, or delivery.',
+    '- "casual": the customer is just passing time — greetings, small talk, no buying intent.',
+    '- "not_permitted": the customer is requesting something the page owner does not permit.',
+    '',
+    'Page policy:',
+    policyText,
+    '',
+    'Reply with STRICT JSON only, no markdown, no extra text:',
+    '{"intent":"purchase"|"casual"|"not_permitted","confidence":0.0,"reason":"short reason"}',
+  ].join('\n');
+}
+
+function parseIntentEvaluation(raw: string): IntentEvaluation | null {
+  if (!raw) return null;
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) text = fence[1].trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  let obj: any;
+  try {
+    obj = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  const intent = String(obj?.intent ?? '').toLowerCase();
+  if (!INTENT_VALUES.includes(intent as CustomerIntent)) return null;
+  const confidenceNum = Number(obj?.confidence);
+  if (!Number.isFinite(confidenceNum)) return null;
+  const confidence = Math.min(1, Math.max(0, confidenceNum));
+  const reason =
+    typeof obj?.reason === 'string' && obj.reason.trim()
+      ? obj.reason.trim().slice(0, 300)
+      : `${INTENT_LABELS[intent as CustomerIntent]} detected.`;
+  return { intent: intent as CustomerIntent, confidence, reason };
+}
+
+function evaluateIntentHeuristic(tailText: string): IntentEvaluation {
+  const lower = (tailText || '').toLowerCase();
+  const tokens = new Set(tokenize(lower));
+  const scores: Record<CustomerIntent, number> = { purchase: 0, casual: 0, not_permitted: 0 };
+  const hits: Record<CustomerIntent, string[]> = { purchase: [], casual: [], not_permitted: [] };
+
+  for (const intent of INTENT_VALUES) {
+    for (const keyword of INTENT_KEYWORDS[intent]) {
+      const lowerKeyword = keyword.toLowerCase();
+      const matched = lowerKeyword.includes(' ')
+        ? lower.includes(lowerKeyword)
+        : tokens.has(lowerKeyword);
+      if (matched) {
+        scores[intent] += 1;
+        hits[intent].push(keyword);
+      }
+    }
+  }
+
+  const ranked = INTENT_VALUES.map((intent) => ({ intent, score: scores[intent] })).sort(
+    (a, b) => b.score - a.score
+  );
+  const top = ranked[0];
+  const second = ranked[1];
+
+  let confidence: number;
+  if (top.score === 0) {
+    confidence = 0.55;
+  } else if (second.score === 0) {
+    confidence = 0.9;
+  } else {
+    const margin = top.score - second.score;
+    confidence = Math.min(0.95, 0.55 + 0.25 * margin);
+  }
+
+  const reason =
+    hits[top.intent].length > 0
+      ? `${INTENT_LABELS[top.intent]} — signals: ${hits[top.intent].join(', ')}.`
+      : `${INTENT_LABELS[top.intent]} — no strong signals; default classification.`;
+
+  return { intent: top.intent, confidence, reason };
+}
+
+export async function evaluateCustomerIntent(
+  accountId: number,
+  aiAgentId: number | null | undefined,
+  tailText: string,
+  policyText: string
+): Promise<IntentEvaluation> {
+  const settings = getSettings();
+  const providerSetting = (settings.llm_default_provider || 'internal').toLowerCase();
+  const apiKey = settings.openai_api_key;
+
+  if (providerSetting === 'openai' && apiKey) {
+    try {
+      const modelName =
+        settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
+          ? settings.llm_default_model
+          : OPENAI_DEFAULT_MODEL;
+      const response = await fetch(OPENAI_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: buildIntentSystemPrompt(policyText) },
+            { role: 'user', content: tailText || '(empty conversation tail)' },
+          ],
+          temperature: 0,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`OpenAI intent API error: ${response.status} ${response.statusText}`);
+      }
+      const data: any = await response.json();
+      const raw = data?.choices?.[0]?.message?.content ?? '';
+      const parsed = parseIntentEvaluation(raw);
+      if (parsed) return parsed;
+    } catch {
+      // Fall through to the deterministic heuristic on any OpenAI failure.
+    }
+  }
+
+  return evaluateIntentHeuristic(tailText);
+}
+
+export async function resolveIntentPolicy(
+  accountId: number,
+  aiAgentId: number | null | undefined
+): Promise<string | null> {
+  let agentConnectionId: number | null = null;
+  if (aiAgentId) {
+    const agent = await prisma.ai_agents.findFirst({
+      where: { id: aiAgentId, account_id: accountId },
+      select: { platform_connection_id: true },
+    });
+    agentConnectionId = agent?.platform_connection_id ?? null;
+  }
+
+  const baseWhere = {
+    account_id: accountId,
+    prompt_type: 'INTENT_POLICY' as const,
+    is_active: true,
+  };
+
+  const levels: Array<{ scope: string; where: any }> = [];
+  if (aiAgentId && agentConnectionId) {
+    levels.push({
+      scope: 'agent+connection',
+      where: { ai_agent_id: aiAgentId, platform_connection_id: agentConnectionId },
+    });
+  }
+  if (agentConnectionId) {
+    levels.push({
+      scope: 'connection',
+      where: { platform_connection_id: agentConnectionId, ai_agent_id: null },
+    });
+  }
+  if (aiAgentId) {
+    levels.push({
+      scope: 'agent',
+      where: { ai_agent_id: aiAgentId, platform_connection_id: null },
+    });
+  }
+  levels.push({ scope: 'account', where: { ai_agent_id: null, platform_connection_id: null } });
+
+  for (const level of levels) {
+    const prompt = await prisma.ai_prompts.findFirst({
+      where: { ...baseWhere, ...level.where },
+      orderBy: { updated_at: 'desc' },
+    });
+    if (prompt) {
+      return prompt.content;
+    }
+  }
+  return null;
+}
+
+export function buildIntentRefusal(language: 'bn' | 'en' = 'bn'): string {
+  if (language === 'en') {
+    return 'Sorry, we are unable to support this request. Our policy does not allow it. Please let us know if we can help with anything else.';
+  }
+  return 'দুঃখিত, এই অনুরোধটি আমরা সাপোর্ট করতে পারছি না। আমাদের নিয়ম অনুযায়ী এটি সম্ভব নয়। অন্য কোনো বিষয়ে সাহায্য করতে চাইলে বলুন।';
 }

@@ -5,7 +5,7 @@ import { requireUser, AuthenticatedRequest } from '../../../middlewares/auth.js'
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../../core/errors.js';
 import { FacebookGraphAPIClient } from '../../../integrations/facebook/client.js';
 import { tokenCipher } from '../../../utils/crypto.js';
-import { generateCompletion } from '../../../services/llm_service.js';
+import { generateCompletion, evaluateCustomerIntent, resolveIntentPolicy, buildIntentRefusal, DEFAULT_INTENT_POLICY_TEXT, type GenerateCompletionResult } from '../../../services/llm_service.js';
 
 export const aiRouter = Router();
 const fbClient = new FacebookGraphAPIClient();
@@ -76,7 +76,7 @@ const faqResponse = (faq: any) => ({
   tags_json: Array.isArray(faq.tags_json) ? faq.tags_json : [],
 });
 
-const PROMPT_TYPES = ['SYSTEM_INSTRUCTION', 'INBOX_REPLY', 'COMMENT_REPLY', 'POST_GENERATION'];
+const PROMPT_TYPES = ['SYSTEM_INSTRUCTION', 'INBOX_REPLY', 'COMMENT_REPLY', 'POST_GENERATION', 'INTENT_POLICY'];
 
 // Resolution precedence per type:
 // (ai_agent_id AND platform_connection_id) -> platform_connection_id only ->
@@ -312,7 +312,7 @@ aiRouter.get('/prompts/resolve/current', requireUser, async (req: AuthenticatedR
 
 // 7. POST /prompts
 const createPromptSchema = z.object({
-  prompt_type: z.enum(['system_instruction', 'inbox_reply', 'comment_reply', 'post_generation']),
+  prompt_type: z.enum(['system_instruction', 'inbox_reply', 'comment_reply', 'post_generation', 'intent_policy']),
   title: z.string().min(1),
   content: z.string().min(1),
   ai_agent_id: z.number().optional().nullable(),
@@ -348,7 +348,7 @@ aiRouter.post('/prompts', requireUser, async (req: AuthenticatedRequest, res: Re
 
 // 8. PUT /prompts/:promptId
 const updatePromptSchema = z.object({
-  prompt_type: z.enum(['system_instruction', 'inbox_reply', 'comment_reply', 'post_generation']).optional(),
+  prompt_type: z.enum(['system_instruction', 'inbox_reply', 'comment_reply', 'post_generation', 'intent_policy']).optional(),
   title: z.string().min(1).optional(),
   content: z.string().min(1).optional(),
   ai_agent_id: z.number().optional().nullable(),
@@ -430,6 +430,32 @@ const fromConversationsSchema = z.object({
 const truncateText = (text: string, maxLength: number): string => {
   const trimmed = (text || '').trim();
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}...` : trimmed;
+};
+
+// Defensive metadata_json reader: Prisma returns a plain object for MySQL JSON
+// columns, but strings are tolerated too so nothing is ever clobbered.
+const parseMetadata = (value: any): Record<string, any> => {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as Record<string, any>;
+    } catch {
+      return {};
+    }
+  }
+  return value as Record<string, any>;
+};
+
+const INTENT_TAIL_MESSAGE_LIMIT = 20;
+const INTENT_TAIL_CHAR_LIMIT = 2000;
+
+const buildIntentTail = (chronologicalMessages: any[]): { tail: string; charCount: number } => {
+  const joined = chronologicalMessages
+    .slice(-INTENT_TAIL_MESSAGE_LIMIT)
+    .map((m) => `${m.sender_type}: ${m.content ?? ''}`)
+    .join('\n');
+  const tail = joined.slice(0, INTENT_TAIL_CHAR_LIMIT);
+  return { tail, charCount: tail.length };
 };
 
 aiRouter.post('/knowledge-sources/from-conversations', requireUser, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -769,9 +795,10 @@ aiRouter.post('/generation/inbox-reply', requireUser, async (req: AuthenticatedR
     const recentMessages = await prisma.messages.findMany({
       where: { conversation_id: conversation.id, account_id: accountId },
       orderBy: { created_at: 'desc' },
-      take: 5,
+      take: 20,
     });
-    const history = recentMessages.reverse().map((m) => `${m.sender_type}: ${m.content}`).join('\n');
+    const history = recentMessages.slice(0, 5).reverse().map((m) => `${m.sender_type}: ${m.content}`).join('\n');
+    const { tail } = buildIntentTail(recentMessages.slice().reverse());
 
     const promptTextParts: string[] = [];
     if (resolved.prompt) {
@@ -786,18 +813,84 @@ aiRouter.post('/generation/inbox-reply', requireUser, async (req: AuthenticatedR
     }
     const promptText = promptTextParts.join('\n\n');
 
-    const completion = await generateCompletion({
-      accountId,
-      actorUserId: req.user.id,
-      promptText,
-      promptType: 'INBOX_REPLY',
-      aiAgentId,
-      platformConnectionId: connectionId,
-      featureName: 'INBOX_REPLY',
-      referenceType: 'conversation',
-      referenceId: String(conversation.id),
-      instructions: payload.instructions ?? null,
-    });
+    const policyText = (await resolveIntentPolicy(accountId, aiAgentId)) ?? DEFAULT_INTENT_POLICY_TEXT;
+    const intentEval = await evaluateCustomerIntent(accountId, aiAgentId, tail, policyText);
+
+    let content: string;
+    let completion: GenerateCompletionResult | null = null;
+    let routedBy: string | null = null;
+
+    if (intentEval.intent === 'not_permitted' && intentEval.confidence >= 0.8) {
+      content = buildIntentRefusal();
+      routedBy = 'intent_policy';
+
+      await prisma.llm_token_usage.create({
+        data: {
+          account_id: accountId,
+          platform_connection_id: connectionId,
+          actor_user_id: req.user.id,
+          provider: 'intent_policy',
+          model_name: 'intent-policy-refusal',
+          feature_name: 'INBOX_REPLY',
+          reference_type: 'conversation',
+          reference_id: String(conversation.id),
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          estimated_cost: 0,
+          request_count: 1,
+          used_at: new Date(),
+          metadata_json: {},
+        },
+      });
+      await prisma.action_usage_logs.create({
+        data: {
+          account_id: accountId,
+          platform_connection_id: connectionId,
+          actor_user_id: req.user.id,
+          action_type: 'AI_REPLY_GENERATION',
+          platform_type: null,
+          reference_type: 'conversation',
+          reference_id: String(conversation.id),
+          quantity: 1,
+          tokens_consumed: 0,
+          estimated_cost: 0,
+          occurred_at: new Date(),
+          metadata_json: {},
+        },
+      });
+    } else {
+      const steeringInstructions: string[] = [];
+      if (intentEval.intent === 'purchase') {
+        steeringInstructions.push(
+          'Sales steering: the customer shows purchase intent. Guide them toward completing the purchase — give price, availability, and payment details from the knowledge base. Keep the tone helpful and focused on closing the sale.'
+        );
+      } else if (intentEval.intent === 'casual') {
+        steeringInstructions.push(
+          'Concise steering: the customer is chatting casually. Reply briefly and warmly, gently point them to the catalog or products, and do not over-engage or waste tokens.'
+        );
+      } else {
+        steeringInstructions.push(
+          `Policy refusal: the customer is requesting something not permitted by the page policy. Politely decline while staying helpful, and do not promise anything not offered on the page. Page policy: ${policyText}`
+        );
+      }
+      const baseInstructions = payload.instructions ? [payload.instructions] : [];
+
+      completion = await generateCompletion({
+        accountId,
+        actorUserId: req.user.id,
+        promptText,
+        promptType: 'INBOX_REPLY',
+        aiAgentId,
+        platformConnectionId: connectionId,
+        featureName: 'INBOX_REPLY',
+        referenceType: 'conversation',
+        referenceId: String(conversation.id),
+        instructions: [...baseInstructions, ...steeringInstructions].join('\n\n') || null,
+        skipStyleExamples: intentEval.intent === 'not_permitted',
+      });
+      content = completion.content;
+    }
 
     let pageToken: string | null = null;
     if (payload.send_now) {
@@ -826,16 +919,18 @@ aiRouter.post('/generation/inbox-reply', requireUser, async (req: AuthenticatedR
           sender_type: 'LLM_BOT',
           direction: 'OUTBOUND',
           delivery_status: 'PENDING',
-          content: completion.content,
+          content,
           created_by_user_id: req.user.id,
           metadata_json: {},
         },
       });
     }
 
+    let currentMetadata = parseMetadata(conversation.metadata_json);
+
     if (payload.send_now) {
       try {
-        const result = await fbClient.sendMessage(pageToken as string, conversation.customer_external_id, completion.content);
+        const result = await fbClient.sendMessage(pageToken as string, conversation.customer_external_id, content);
         const externalMessageId = String(result?.message_id || result?.id || '') || null;
         if (messageRow) {
           await prisma.messages.update({
@@ -859,33 +954,111 @@ aiRouter.post('/generation/inbox-reply', requireUser, async (req: AuthenticatedR
 
       // Auto-pause AI chat so the bot does not interfere mid-conversation.
       const pauseUntil = new Date(Date.now() + 15 * 60 * 1000);
+      currentMetadata = {
+        ...currentMetadata,
+        ai_chat: { mode: 'manual', manual_until: pauseUntil.toISOString() },
+      };
       await prisma.conversations.update({
         where: { id: conversation.id },
-        data: {
-          metadata_json: {
-            ...(conversation.metadata_json as any || {}),
-            ai_chat: { mode: 'manual', manual_until: pauseUntil.toISOString() },
-          },
-        },
+        data: { metadata_json: currentMetadata },
       });
     }
+
+    // Cache the evaluation on the conversation so the frontend (and future
+    // phases) can read it without re-running the classifier.
+    const evaluatedAt = new Date().toISOString();
+    currentMetadata = {
+      ...currentMetadata,
+      intent_eval: {
+        intent: intentEval.intent,
+        confidence: intentEval.confidence,
+        reason: intentEval.reason,
+        evaluated_at: evaluatedAt,
+      },
+    };
+    await prisma.conversations.update({
+      where: { id: conversation.id },
+      data: { metadata_json: currentMetadata },
+    });
 
     const requiresApproval = !payload.send_now && Boolean(payload.persist_draft);
 
     return res.status(201).json({
-      content: completion.content,
+      content,
       requires_approval: requiresApproval,
-      provider: completion.provider,
-      model_name: completion.modelName,
-      prompt_tokens: completion.promptTokens,
-      completion_tokens: completion.completionTokens,
-      total_tokens: completion.totalTokens,
+      provider: completion ? completion.provider : 'intent_policy',
+      model_name: completion ? completion.modelName : 'intent-policy-refusal',
+      prompt_tokens: completion ? completion.promptTokens : 0,
+      completion_tokens: completion ? completion.completionTokens : 0,
+      total_tokens: completion ? completion.totalTokens : 0,
       prompt_id: resolved.prompt ? resolved.prompt.id : null,
       prompt_scope: resolved.source_scope,
       ai_agent_id: aiAgentId,
       platform_connection_id: connectionId,
       draft_reference_type: messageRow ? 'message' : null,
       draft_object_id: messageRow ? messageRow.id : null,
+      intent_eval: {
+        intent: intentEval.intent,
+        confidence: intentEval.confidence,
+        reason: intentEval.reason,
+      },
+      routed_by: routedBy,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 15b. POST /generation/evaluate-intent  (standalone customer-intent classifier)
+const evaluateIntentSchema = z.object({
+  conversation_id: z.number().int().positive(),
+  ai_agent_id: z.number().int().positive().optional().nullable(),
+});
+
+aiRouter.post('/generation/evaluate-intent', requireUser, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const accountId = getAccountId(req);
+    const payload = evaluateIntentSchema.parse(req.body);
+
+    const conversation = await prisma.conversations.findFirst({
+      where: { id: payload.conversation_id, account_id: accountId },
+    });
+    if (!conversation) {
+      throw new NotFoundError('Conversation not found.');
+    }
+
+    const aiAgentId = payload.ai_agent_id ?? null;
+
+    const messages = await prisma.messages.findMany({
+      where: { conversation_id: conversation.id, account_id: accountId },
+      orderBy: { created_at: 'asc' },
+    });
+    const { tail, charCount } = buildIntentTail(messages);
+
+    const policyText = (await resolveIntentPolicy(accountId, aiAgentId)) ?? DEFAULT_INTENT_POLICY_TEXT;
+    const intentEval = await evaluateCustomerIntent(accountId, aiAgentId, tail, policyText);
+
+    const evaluatedAt = new Date().toISOString();
+    const currentMetadata = {
+      ...parseMetadata(conversation.metadata_json),
+      intent_eval: {
+        intent: intentEval.intent,
+        confidence: intentEval.confidence,
+        reason: intentEval.reason,
+        evaluated_at: evaluatedAt,
+      },
+    };
+    await prisma.conversations.update({
+      where: { id: conversation.id },
+      data: { metadata_json: currentMetadata },
+    });
+
+    return res.json({
+      intent: intentEval.intent,
+      confidence: intentEval.confidence,
+      reason: intentEval.reason,
+      evaluated_at: evaluatedAt,
+      tail_used: charCount,
     });
   } catch (err) {
     next(err);
