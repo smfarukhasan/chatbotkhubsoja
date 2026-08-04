@@ -3,7 +3,7 @@
 > Repo: `chatbotkhubsoja`
 > Analyzed: `backend_js/` (live backend)
 > Date: 2026-08-04
-> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`); added conversation style training (`POST /knowledge-sources/from-conversations` + `findStyleExamples` RAG retrieval); added customer intent evaluation (`INTENT_POLICY` prompt type + `evaluateCustomerIntent`)
+> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`); added conversation style training (`POST /knowledge-sources/from-conversations` + `findStyleExamples` RAG retrieval); added customer intent evaluation (`INTENT_POLICY` prompt type + `evaluateCustomerIntent`); added product catalog (`/products` CRUD + image upload + `findProducts` RAG retrieval)
 
 ## Overview
 
@@ -69,6 +69,16 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 - `POST /:id/publish-now` — **real** Graph API publish to the Page feed; marks `published` / `failed`
 - `PATCH /:id/ai-auto-reply` toggle
 
+### Products (`/products`)
+- `POST /upload-image` — multipart upload (field `image`, JPEG/PNG/WEBP/GIF only, max 5 MB) saved to `backend_js/uploads/products/` with a `crypto.randomUUID()` filename and served statically at `/uploads`; returns `201 { url }` with an absolute URL built from the `public_base_url` setting (falls back to the request protocol/host)
+- `GET /` — list with filters `connection_id` (page), `q` (name/description/category substring, case-insensitive), `available` (`true`/`false`)
+- `POST /` — create; `platform_connection_id` is required and validated to belong to the account; accepts `name`, `description`, `price` (Decimal), `currency`, `price_text`, `category`, `images[]`
+- `PUT /:productId` — full update (partial merge semantics, keeps existing values for omitted fields)
+- `DELETE /:productId` — hard delete (204)
+- `PATCH /:productId/availability` — `{ is_available }` toggle (in-stock / out-of-stock)
+- Products belong to a **specific Facebook Page** (`platform_connection_id`) — the "per-page catalog" model; all routes are account-scoped and the connection ownership is re-checked on create/update
+- At AI reply time the top-3 matching products are injected into the generation context (`findProducts`, keyword-overlap scoring with the Bengali-aware tokenizer — same pattern as FAQ/style-example retrieval) with a "recommend ONLY from these; never invent prices or products; say not currently available" instruction; retrieval is skipped entirely when the customer intent is `not_permitted`
+
 ### AI Configuration (`/ai`)
 - Agents: `GET/POST /agents`, `GET/PUT /agents/:agentId` (status: draft / active / paused / archived)
 - Prompts: `GET/POST /prompts`, `PUT /prompts/:promptId` — typed (`system_instruction` / `inbox_reply` / `comment_reply` / `post_generation` / `intent_policy`), version bumped on content change
@@ -121,4 +131,4 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 
 - **No worker process** — only BullMQ queue definitions exist; nothing consumes them, so queued webhook events and automation `sync_jobs` are stored but never processed (no AI reply generation in background, no scheduled publishing, no delivery retries). AI generation currently runs synchronously inside the `/ai/generation/*` request handlers.
 
-> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes. Conversation style training was added the same day (`POST /ai/knowledge-sources/from-conversations`, `findStyleExamples` retrieval, frontend `/ai/style` page), followed by customer intent evaluation (`INTENT_POLICY` prompt type, `evaluateCustomerIntent`, `/ai/generation/evaluate-intent`).
+> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes. Conversation style training was added the same day (`POST /ai/knowledge-sources/from-conversations`, `findStyleExamples` retrieval, frontend `/ai/style` page), followed by customer intent evaluation (`INTENT_POLICY` prompt type, `evaluateCustomerIntent`, `/ai/generation/evaluate-intent`) and the product catalog (`/products` CRUD + `POST /upload-image` + `findProducts` RAG retrieval, frontend `/products` page).

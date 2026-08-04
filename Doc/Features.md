@@ -19,9 +19,9 @@ Product/Item
 Special instruction
 
 
-sourcing -- can add product - invetory management
+sourcing -- can add product - invetory management  [implemented: /products page, per-Facebook-Page catalog]
 
-one product - multiple images
+one product - multiple images  [implemented: upload (JPEG/PNG/WEBP/GIF, 5MB) + URL paste, images[] per product]
 
 
 
@@ -36,10 +36,18 @@ Long chat evaluation
 
 
 # Next Week Plan
-
-
 AI integration
 train
 chat reply
 special requiremts for each page
+normal chat
+voice chat reply in text
+
+
+
+
+
+
+
+
 

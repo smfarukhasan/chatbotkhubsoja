@@ -83,7 +83,7 @@ Express 4 + TypeScript API with Prisma ORM (MySQL), BullMQ + Redis queues, JWT a
 
 React 18 + TypeScript + Vite SPA with Zustand state and react-router.
 
-- `src/pages`: auth, dashboard, setup wizard, connections, AI management, inbox, comments moderation, posts, team, billing, usage reports, audit logs, AI style examples (`/ai/style`)
+- `src/pages`: auth, dashboard, setup wizard, connections, AI management, inbox, comments moderation, posts, product catalog (`/products`), team, billing, usage reports, audit logs, AI style examples (`/ai/style`)
 - `src/features/*/api`: feature-oriented API client layers
 - `src/shared/types`: shared typed contracts
 - `src/lib/api/client.ts`: axios API client with token handling
@@ -223,6 +223,22 @@ Implemented business rules:
 - **Publish-now** posts real feed content to the Page via the Graph API and updates status/error state
 - Per-post AI auto-reply toggle
 
+### Product Catalog
+
+- `POST /api/v1/products/upload-image`
+- `GET /api/v1/products`
+- `POST /api/v1/products`
+- `PUT /api/v1/products/:productId`
+- `DELETE /api/v1/products/:productId`
+- `PATCH /api/v1/products/:productId/availability`
+
+Implemented business rules:
+
+- Products belong to a connected Facebook Page (`platform_connection_id`), so each page has its own catalog
+- **Multiple images per product**: upload files via `POST /upload-image` (JPEG/PNG/WEBP/GIF, ≤ 5 MB, stored under `backend_js/uploads/products/` and served at `/uploads`) or paste any image URL — both feed the `images[]` array
+- Price stored as `Decimal` (serialized as a string in responses) with an optional `currency` code and a free-form `price_text` override; availability toggle (`is_available`) for in-stock / out-of-stock
+- At AI reply time the top-3 products matching the customer message are injected into the generation context (keyword-overlap RAG, same mechanism as FAQ and style examples) with a "never invent prices or products" instruction; retrieval is skipped when the customer intent is `not_permitted`
+
 ### Health
 
 - `GET /api/v1/health` — API + database status (`200 ok` / `500 degraded`)
@@ -254,7 +270,7 @@ Implemented business rules:
 
 - Account-scoped AI agents, prompts (typed: `system_instruction` / `inbox_reply` / `comment_reply` / `post_generation` / `intent_policy`), knowledge sources, and FAQ entries
 - Prompt resolution precedence: `agent+connection` → `connection` → `agent` → account-global (per prompt type)
-- **Generation endpoints** compose context (resolved prompt, conversation history / comment / title hint, FAQ knowledge base) and call the LLM service; responses carry token usage, prompt scope, and draft references
+- **Generation endpoints** compose context (resolved prompt, conversation history / comment / title hint, FAQ knowledge base, and matching product-catalog entries) and call the LLM service; responses carry token usage, prompt scope, and draft references
 - **Customer intent evaluation**: inbox-reply generation first classifies the conversation tail (last ~20 messages / ~2000 chars) as `purchase` / `casual` / `not_permitted` (`evaluateCustomerIntent` — OpenAI strict-JSON, with a deterministic Bangla/English keyword-heuristic fallback) against the owner's `INTENT_POLICY` prompt (resolved with the standard precedence; a safe default applies until configured). Replies then route by intent: `purchase` → sales steering; `casual` → concise steering; `not_permitted` at confidence ≥ 0.8 → fixed refusal template with the LLM skipped (zero token cost, cannot be talked around); below 0.8 → LLM-phrased polite decline with the policy. The evaluation is cached in `conversations.metadata_json` (`intent_eval`) and returned on the reply; `POST /api/v1/ai/generation/evaluate-intent` runs the classifier standalone without replying
 - **Conversation style training**: `POST /ai/knowledge-sources/from-conversations` lets users select real inbox conversations (frontend `/ai/style` page); the backend extracts `Customer → Owner` reply pairs (a `CUSTOMER`/`INBOUND` message followed by the next `HUMAN_ADMIN`/`OUTBOUND` reply; `LLM_BOT`/`SYSTEM` excluded), max 5 pairs per conversation, and stores them as `conversation_style` knowledge rows (no schema change — reuses `ai_knowledge_sources` with `metadata_json.kind`); re-training a conversation is idempotent (updates the existing row)
 - At generation time the top-3 style examples are retrieved by keyword overlap (Bengali-aware tokenizer) and injected with a "match this tone of voice" instruction — RAG retrieval, so token cost stays flat regardless of trained-conversation count (style imitation, not fine-tuning)
