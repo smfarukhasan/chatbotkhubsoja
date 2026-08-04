@@ -3,6 +3,7 @@
 > Repo: `chatbotkhubsoja`
 > Analyzed: `backend_js/` (live backend)
 > Date: 2026-08-04
+> Updated: 2026-08-04 — added AI, billing, automation, observability, and reports modules (commit `d7e66fa`)
 
 ## Overview
 
@@ -68,6 +69,40 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 - `POST /:id/publish-now` — **real** Graph API publish to the Page feed; marks `published` / `failed`
 - `PATCH /:id/ai-auto-reply` toggle
 
+### AI Configuration (`/ai`)
+- Agents: `GET/POST /agents`, `GET/PUT /agents/:agentId` (status: draft / active / paused / archived)
+- Prompts: `GET/POST /prompts`, `PUT /prompts/:promptId` — typed (`system_instruction` / `inbox_reply` / `comment_reply` / `post_generation`), version bumped on content change
+- Prompt resolution: `GET /prompts/resolve/current` resolves the active prompt per type with precedence `agent+connection` → `connection` → `agent` → account-global
+- Knowledge sources: `GET/POST /knowledge-sources`, `PUT /knowledge-sources/:sourceId`
+- FAQ: `GET/POST /faq`, `PUT /faq/:faqId` (tags, `is_active`)
+- Account-scoped; enum-ish fields lowercased in responses to match the frontend contract
+
+### AI Generation (`/ai/generation`)
+- `POST /inbox-reply` — composes resolved prompt + conversation history + FAQ knowledge, calls the LLM service; optional `send_now` publishes a real Messenger reply via Graph API (records `SENT`/`FAILED`, auto-pauses AI chat 15 min), optional `persist_draft` stores an `LLM_BOT` outbound draft
+- `POST /comment-reply` — same pattern for comments; `send_now` publishes via Graph API, updates comment to `replied`, stores `facebook_comment_replies` row; `persist_draft` writes `ai_draft_reply` on the comment
+- `POST /post` — generates post content (`POST_GENERATION`); `persist_draft` creates/updates a `social_posts` draft (`is_llm_generated`, `requires_approval`)
+- Every completion logs to `llm_token_usage` and `action_usage_logs` (tokens + estimated cost)
+- Backed by `src/services/llm_service.ts`: OpenAI provider when `LLM_DEFAULT_PROVIDER=openai` + `OPENAI_API_KEY` set, otherwise a deterministic internal fallback (`internal-reply-model-v1`) with FAQ keyword matching; cost estimate recorded per call
+
+### Billing (`/billing`)
+- Plans: `GET /plans`, `GET /features` (feature catalog)
+- Subscription: `GET/POST/PUT /subscription` (plan code + status; `PUT` switches plans)
+- Wallet & ledger: `GET /wallet`, `GET /transactions`, `GET /token-ledger`
+- Token packages: `GET/POST /token-packages`, `POST /token-purchases` (credits wallet, records transaction)
+- Account-scoped; Decimal columns serialized as strings to match the frontend types
+
+### Automation Workflows (`/automation`)
+- `GET/POST /workflows`, `PUT/DELETE /workflows/:workflowId`
+- `POST /workflows/:workflowId/run` — creates a `sync_job` (`AUTOMATION_RULE_EXECUTION`, `PENDING`) and returns `{ workflow, sync_job_id }`; `scheduled_daily` triggers recompute `next_run_at` to the next occurrence
+
+### Observability (`/observability`)
+- `GET /action-usage-logs`, `GET /llm-token-usage`, `GET /audit-logs` — paginated (`{ items, total, page, page_size }`), enum fields lowercased
+
+### Reports (`/reports`)
+- `GET /dashboard-summary` (metric cards + audit/conversation/comment/post/token aggregates)
+- `GET /token-usage-summary`, `GET /billing-summary` (aggregate LLM/action costs, top actions, usage by model)
+- `GET /conversation-stats`, `GET /comment-stats`, `GET /post-stats` (status counts + zero-filled 7/14-day daily buckets)
+
 ### Health (`/health`)
 - API + database status (`200` ok / `500` degraded)
 
@@ -80,10 +115,6 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 
 ## Gaps vs. README / Python Version (not implemented in `backend_js`)
 
-- **No AI endpoints** — agents, prompts, knowledge sources, FAQ, or AI generation (the README's `/ai/*` are absent here)
-- **No billing / subscription / token-wallet endpoints** (`/billing/*`, token ledger, plans)
-- **No automation workflow endpoints** (`/automation/workflows`)
-- **No observability / reports / audit endpoints** (`/observability/*`, `/reports/*`)
-- **No worker process** — only queue definitions exist; nothing consumes them, so queued webhook events are stored but never processed (no AI reply generation, no scheduled publishing, no delivery retries)
+- **No worker process** — only BullMQ queue definitions exist; nothing consumes them, so queued webhook events and automation `sync_jobs` are stored but never processed (no AI reply generation in background, no scheduled publishing, no delivery retries). AI generation currently runs synchronously inside the `/ai/generation/*` request handlers.
 
-> Note: the frontend already has API layers for all of the above (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) — those frontend features will 404 against this backend until the routes are added.
+> Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes.
