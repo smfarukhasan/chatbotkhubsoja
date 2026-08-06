@@ -1,9 +1,10 @@
 import { prisma } from '../core/db.js';
 import { getSettings } from '../config/settings.js';
+import { logger } from '../core/logging.js';
 
 export interface GenerateCompletionOptions {
   accountId: number;
-  actorUserId: number;
+  actorUserId: number | null;
   promptText: string;
   promptType: string;
   aiAgentId?: number | null;
@@ -36,9 +37,17 @@ export interface IntentEvaluation {
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 const INTERNAL_MODEL = 'internal-reply-model-v1';
 const OPENAI_INPUT_RATE_PER_1K = 0.00015;
 const OPENAI_OUTPUT_RATE_PER_1K = 0.0006;
+const GROQ_INPUT_RATE_PER_1K = 0.00059;
+const GROQ_OUTPUT_RATE_PER_1K = 0.00079;
+const GEMINI_INPUT_RATE_PER_1K = 0.0003;
+const GEMINI_OUTPUT_RATE_PER_1K = 0.0025;
 const INTERNAL_RATE_PER_1K = 0.002;
 
 // Tokenizer supports ASCII and Bengali script ranges.
@@ -64,6 +73,46 @@ const capitalize = (value: string): string => {
 };
 
 const roundTo6 = (value: number): number => Math.round(value * 1e6) / 1e6;
+
+const GEMINI_RETRY_ATTEMPTS = 3;
+const GEMINI_RETRY_BASE_DELAY_MS = 2000;
+
+// Parse the suggested retry delay from a Gemini 429 error message, e.g. "retry in 17.17s".
+const parseGeminiRetryDelay = (message: string): number => {
+  const match = message.match(/retry in ([\d.]+)s/i);
+  return match ? Math.ceil(parseFloat(match[1]) * 1000) : GEMINI_RETRY_BASE_DELAY_MS;
+};
+
+// POST to the Gemini generateContent API with retry-on-429 (free-tier quota exhaustion).
+const postGemini = async (modelName: string, apiKey: string, body: any): Promise<Response> => {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < GEMINI_RETRY_ATTEMPTS; attempt++) {
+    const response = await fetch(`${GEMINI_API_URL}/${modelName}:generateContent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (response.status !== 429 || attempt === GEMINI_RETRY_ATTEMPTS - 1) {
+      return response;
+    }
+
+    let retryAfterMs = GEMINI_RETRY_BASE_DELAY_MS * (attempt + 1);
+    try {
+      const errorBody: any = await response.clone().json();
+      retryAfterMs = parseGeminiRetryDelay(errorBody?.error?.message || '');
+    } catch {
+      // Non-JSON error body; use the exponential default.
+    }
+    logger.warn(`Gemini 429 (quota) on attempt ${attempt + 1}; retrying in ${Math.round(retryAfterMs / 1000)}s`);
+    await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+    lastError = new Error(`Gemini 429 after ${attempt + 1} attempts`);
+  }
+  throw lastError;
+};
 
 const truncateText = (text: string, maxLength: number): string => {
   if (!text) return '';
@@ -221,9 +270,11 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
   let estimatedCost: number;
 
   const providerSetting = (settings.llm_default_provider || 'internal').toLowerCase();
-  const apiKey = settings.openai_api_key;
+  const openaiApiKey = settings.openai_api_key;
+  const groqApiKey = settings.groq_api_key;
+  const geminiApiKey = settings.gemini_api_key;
 
-  if (providerSetting === 'openai' && apiKey) {
+  if (providerSetting === 'openai' && openaiApiKey) {
     try {
       modelName =
         settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
@@ -233,7 +284,7 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${openaiApiKey}`,
         },
         body: JSON.stringify({
           model: modelName,
@@ -259,6 +310,95 @@ export async function generateCompletion(options: GenerateCompletionOptions): Pr
       provider = 'openai';
     } catch {
       // Fall back to the internal deterministic provider on any OpenAI error.
+      provider = 'internal';
+      modelName = INTERNAL_MODEL;
+      content = generateInternalContent({ promptType, promptText, faqMatches, agent });
+      completionTokens = Math.ceil(content.length / 4);
+      estimatedCost = roundTo6(((promptTokens + completionTokens) / 1000) * INTERNAL_RATE_PER_1K);
+    }
+  } else if (providerSetting === 'groq' && groqApiKey) {
+    try {
+      modelName =
+        settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
+          ? settings.llm_default_model
+          : GROQ_DEFAULT_MODEL;
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqApiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an AI assistant helping businesses automate customer conversations, comment replies, and social media posts. Respond naturally, helpfully, and professionally. Match the customer\u2019s language (Bangla or English).',
+            },
+            { role: 'user', content: composedPrompt },
+          ],
+          temperature: 0.7,
+          max_tokens: 1024,
+        }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Groq API error: ${response.status} ${response.statusText} ${errorText.slice(0, 300)}`);
+      }
+      const data: any = await response.json();
+      content = data?.choices?.[0]?.message?.content ?? '';
+      completionTokens = data?.usage?.completion_tokens ?? Math.ceil(content.length / 4);
+      estimatedCost = roundTo6(
+        (promptTokens / 1000) * GROQ_INPUT_RATE_PER_1K + (completionTokens / 1000) * GROQ_OUTPUT_RATE_PER_1K
+      );
+      provider = 'groq';
+    } catch (err: any) {
+      // Fall back to the internal deterministic provider on any Groq error.
+      logger.error(`Groq generation failed, falling back to internal: ${err?.message || err}`);
+      provider = 'internal';
+      modelName = INTERNAL_MODEL;
+      content = generateInternalContent({ promptType, promptText, faqMatches, agent });
+      completionTokens = Math.ceil(content.length / 4);
+      estimatedCost = roundTo6(((promptTokens + completionTokens) / 1000) * INTERNAL_RATE_PER_1K);
+    }
+  } else if (providerSetting === 'gemini' && geminiApiKey) {
+    try {
+      modelName =
+        settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
+          ? settings.llm_default_model
+          : GEMINI_DEFAULT_MODEL;
+      const response = await postGemini(modelName, geminiApiKey, {
+        system_instruction: {
+          parts: [
+            {
+              text: 'You are an AI assistant helping businesses automate customer conversations, comment replies, and social media posts. Respond naturally, helpfully, and professionally. Match the customer\u2019s language (Bangla or English).',
+            },
+          ],
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: composedPrompt }],
+          },
+        ],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+      });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Gemini API error: ${response.status} ${response.statusText} ${errorText.slice(0, 300)}`);
+      }
+      const data: any = await response.json();
+      content =
+        data?.candidates?.[0]?.content?.parts?.map((part: any) => part?.text ?? '').join('') ?? '';
+      completionTokens =
+        data?.usageMetadata?.candidatesTokenCount ?? Math.ceil(content.length / 4);
+      estimatedCost = roundTo6(
+        (promptTokens / 1000) * GEMINI_INPUT_RATE_PER_1K + (completionTokens / 1000) * GEMINI_OUTPUT_RATE_PER_1K
+      );
+      provider = 'gemini';
+    } catch (err: any) {
+      // Fall back to the internal deterministic provider on any Gemini error.
+      logger.error(`Gemini generation failed, falling back to internal: ${err?.message || err}`);
       provider = 'internal';
       modelName = INTERNAL_MODEL;
       content = generateInternalContent({ promptType, promptText, faqMatches, agent });
@@ -436,9 +576,11 @@ export async function evaluateCustomerIntent(
 ): Promise<IntentEvaluation> {
   const settings = getSettings();
   const providerSetting = (settings.llm_default_provider || 'internal').toLowerCase();
-  const apiKey = settings.openai_api_key;
+  const openaiApiKey = settings.openai_api_key;
+  const groqApiKey = settings.groq_api_key;
+  const geminiApiKey = settings.gemini_api_key;
 
-  if (providerSetting === 'openai' && apiKey) {
+  if (providerSetting === 'openai' && openaiApiKey) {
     try {
       const modelName =
         settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
@@ -448,7 +590,7 @@ export async function evaluateCustomerIntent(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${openaiApiKey}`,
         },
         body: JSON.stringify({
           model: modelName,
@@ -468,6 +610,62 @@ export async function evaluateCustomerIntent(
       if (parsed) return parsed;
     } catch {
       // Fall through to the deterministic heuristic on any OpenAI failure.
+    }
+  } else if (providerSetting === 'groq' && groqApiKey) {
+    try {
+      const modelName =
+        settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
+          ? settings.llm_default_model
+          : GROQ_DEFAULT_MODEL;
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqApiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: buildIntentSystemPrompt(policyText) },
+            { role: 'user', content: tailText || '(empty conversation tail)' },
+          ],
+          temperature: 0,
+          max_tokens: 200,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Groq intent API error: ${response.status} ${response.statusText}`);
+      }
+      const data: any = await response.json();
+      const raw = data?.choices?.[0]?.message?.content ?? '';
+      const parsed = parseIntentEvaluation(raw);
+      if (parsed) return parsed;
+    } catch (err: any) {
+      // Fall through to the deterministic heuristic on any Groq failure.
+      logger.error(`Groq intent evaluation failed, using heuristic: ${err?.message || err}`);
+    }
+  } else if (providerSetting === 'gemini' && geminiApiKey) {
+    try {
+      const modelName =
+        settings.llm_default_model && settings.llm_default_model !== INTERNAL_MODEL
+          ? settings.llm_default_model
+          : GEMINI_DEFAULT_MODEL;
+      const response = await postGemini(modelName, geminiApiKey, {
+        system_instruction: { parts: [{ text: buildIntentSystemPrompt(policyText) }] },
+        contents: [{ role: 'user', parts: [{ text: tailText || '(empty conversation tail)' }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 200 },
+      });
+      if (!response.ok) {
+        throw new Error(`Gemini intent API error: ${response.status} ${response.statusText}`);
+      }
+      const data: any = await response.json();
+      const raw =
+        data?.candidates?.[0]?.content?.parts?.map((part: any) => part?.text ?? '').join('') ?? '';
+      const parsed = parseIntentEvaluation(raw);
+      if (parsed) return parsed;
+    } catch (err: any) {
+      // Fall through to the deterministic heuristic on any Gemini failure.
+      logger.error(`Gemini intent evaluation failed, using heuristic: ${err?.message || err}`);
     }
   }
 

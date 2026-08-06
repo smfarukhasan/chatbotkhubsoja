@@ -952,17 +952,6 @@ aiRouter.post('/generation/inbox-reply', requireUser, async (req: AuthenticatedR
         }
         throw new BadRequestError(`Facebook API send failed: ${errorMessage}`);
       }
-
-      // Auto-pause AI chat so the bot does not interfere mid-conversation.
-      const pauseUntil = new Date(Date.now() + 15 * 60 * 1000);
-      currentMetadata = {
-        ...currentMetadata,
-        ai_chat: { mode: 'manual', manual_until: pauseUntil.toISOString() },
-      };
-      await prisma.conversations.update({
-        where: { id: conversation.id },
-        data: { metadata_json: currentMetadata },
-      });
     }
 
     // Cache the evaluation on the conversation so the frontend (and future

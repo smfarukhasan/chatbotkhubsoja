@@ -73,10 +73,11 @@ Express 4 + TypeScript API with Prisma ORM (MySQL), BullMQ + Redis queues, JWT a
 - `src/core/security.ts`: JWT access/refresh tokens, bcryptjs password hashing
 - `src/middlewares/auth.ts`: JWT auth middleware (`requireUser`)
 - `src/services/platform_connection_service.ts`: platform connection lifecycle
-- `src/services/llm_service.ts`: LLM completion service (OpenAI provider with internal deterministic fallback, FAQ matching, style-example retrieval, customer-intent classification, token/cost accounting)
-- `src/integrations/facebook`: Graph API client, OAuth session storage, connection service
+- `src/services/llm_service.ts`: LLM completion service (provider chain: OpenAI → Groq → Gemini → internal deterministic fallback; FAQ matching, style-example retrieval, product-catalog RAG, customer-intent classification, token/cost accounting, Gemini 429 retry)
+- `src/integrations/facebook`: Graph API client (OAuth, messaging, comments, posts, typing indicators, webhook subscription), OAuth session storage, connection service
 - `src/integrations/whatsapp`: Cloud API client + connection service
 - `src/workers/queues.ts`: BullMQ queue definitions (webhooks, sync, messages, comments, posts, maintenance, default)
+- `src/workers/processor.ts` + `src/workers/start.ts`: **webhook event processor worker** — consumes webhook events, persists conversations/messages/comments, debounced auto-reply generation and Graph API sends (`npm run worker`)
 - `prisma/schema.prisma`: data model (users, accounts, memberships, refresh tokens, onboarding keys, platform connections, webhook events, conversations/messages, Facebook comments/replies, social posts, AI config tables, billing/RBAC tables)
 
 ### Frontend (`frontend/`)
@@ -169,6 +170,8 @@ Implemented business rules:
 - Deduplication via a SHA-256 event key (source + connection + signature + payload)
 - Inbound events are enqueued to the BullMQ `webhooks` queue for processing
 - Event classification: `inbound_message`, `inbound_comment`, generic events
+- **Processing**: the worker (`npm run worker`) consumes events — persists conversations/messages/comments, then auto-replies (see [AI Auto-Reply Worker](#ai-auto-reply-worker))
+- Page webhook subscription uses valid `subscribed_fields` (`messages`, `conversations`, `feed`, `mention`, `message_deliveries`, `message_reads`, `message_echoes`, `messaging_postbacks`, `messaging_optins`); sync reports the subscription state correctly (app ID + subscribed fields, not a non-existent `active` field)
 
 ### Inbox and Conversation Management
 
@@ -274,8 +277,22 @@ Implemented business rules:
 - **Customer intent evaluation**: inbox-reply generation first classifies the conversation tail (last ~20 messages / ~2000 chars) as `purchase` / `casual` / `not_permitted` (`evaluateCustomerIntent` — OpenAI strict-JSON, with a deterministic Bangla/English keyword-heuristic fallback) against the owner's `INTENT_POLICY` prompt (resolved with the standard precedence; a safe default applies until configured). Replies then route by intent: `purchase` → sales steering; `casual` → concise steering; `not_permitted` at confidence ≥ 0.8 → fixed refusal template with the LLM skipped (zero token cost, cannot be talked around); below 0.8 → LLM-phrased polite decline with the policy. The evaluation is cached in `conversations.metadata_json` (`intent_eval`) and returned on the reply; `POST /api/v1/ai/generation/evaluate-intent` runs the classifier standalone without replying
 - **Conversation style training**: `POST /ai/knowledge-sources/from-conversations` lets users select real inbox conversations (frontend `/ai/style` page); the backend extracts `Customer → Owner` reply pairs (a `CUSTOMER`/`INBOUND` message followed by the next `HUMAN_ADMIN`/`OUTBOUND` reply; `LLM_BOT`/`SYSTEM` excluded), max 5 pairs per conversation, and stores them as `conversation_style` knowledge rows (no schema change — reuses `ai_knowledge_sources` with `metadata_json.kind`); re-training a conversation is idempotent (updates the existing row)
 - At generation time the top-3 style examples are retrieved by keyword overlap (Bengali-aware tokenizer) and injected with a "match this tone of voice" instruction — RAG retrieval, so token cost stays flat regardless of trained-conversation count (style imitation, not fine-tuning)
-- Generation can persist drafts and, when `send_now` is set, publish real replies to Messenger / comment threads via the Graph API (recording `SENT` / `FAILED` states); a sent inbox reply auto-pauses AI chat for 15 minutes
-- `src/services/llm_service.ts` routes to OpenAI (`LLM_DEFAULT_PROVIDER=openai` + `OPENAI_API_KEY`) with a deterministic internal fallback (`internal-reply-model-v1`), logs every completion to `llm_token_usage` and `action_usage_logs`
+- Generation can persist drafts and, when `send_now` is set, publish real replies to Messenger / comment threads via the Graph API (recording `SENT` / `FAILED` states)
+- **LLM provider chain** — `src/services/llm_service.ts` resolves providers in order: `openai` (`OPENAI_API_KEY`) → `groq` (`GROQ_API_KEY`, default model `llama-3.3-70b-versatile`) → `gemini` (`GEMINI_API_KEY`, default model `gemini-2.5-flash`, with retry-on-429 for free-tier quota) → deterministic internal fallback (`internal-reply-model-v1`). Select with `LLM_DEFAULT_PROVIDER` + `LLM_DEFAULT_MODEL`. Every completion is logged to `llm_token_usage` and `action_usage_logs`, and provider failures are logged (never silent)
+
+### AI Auto-Reply Worker
+
+The background worker (`backend_js/src/workers/processor.ts`, run with `npm run worker`) turns ingested webhook events into automated replies:
+
+- **Consumes** the `webhooks` queue (`process_webhook_event`): persists the customer message, upserts the conversation, then schedules a debounced reply job on the `messages` queue
+- **Debounced burst handling** — consecutive customer messages wait **6 seconds** (AUTO_REPLY_DEBOUNCE_MS) after the last message; stale jobs (a newer inbound message exists) are skipped, so a burst gets **one unified reply** built from the full conversation history
+- **Regeneration** — if a new customer message arrives while the LLM is generating, the reply is regenerated with the new text included, within a **4-second window** (AUTO_REPLY_REGENERATE_WINDOW_MS, max 3 regenerations), so the reply always covers the latest input
+- **Typing indicator** — sends `sender_action: typing_on` while generating and `typing_off` after send (best-effort, failures ignored)
+- **Reply flow** — intent classification (purchase/casual/not_permitted) routes the reply; refusal template is used for `not_permitted` at confidence ≥ 0.8; replies are persisted as `LLM_BOT` messages with `SENT`/`FAILED` delivery states and real Graph API message IDs
+- **Concurrency safety** — per-conversation Redis lock prevents simultaneous generations; stale-job checks and pre-send re-checks guarantee exactly one reply per burst
+- **Echo filtering** — `is_echo` events and page-as-sender payloads are ignored (the bot never replies to its own messages)
+- **AI chat modes** — `auto` (default, worker replies), `manual` (paused, replies to the frontend pause button only), `off` (never auto-replies); **no automatic 15-minute pause after sends** — the pause is controlled exclusively from the frontend
+- **Comment auto-reply** — inbound comments are stored and auto-replied (with `send_now`-style Graph API publish) when the post has `ai_auto_reply_enabled`
 
 ### Billing
 
@@ -329,15 +346,16 @@ Implemented business rules:
 
 ## Not Yet Implemented
 
-These features exist in the frontend and in the archived Python backend, but the Express backend does **not** yet expose routes for them. Frontend pages calling these APIs will fail until the routes are added:
-
-- **Background workers** — BullMQ queues are defined (`webhooks`, `sync`, `messages`, `comments`, `posts`, `maintenance`, `default`) but no worker process consumes them yet; webhook events and queued sync jobs are stored but not processed
+- **WhatsApp auto-reply worker** — WhatsApp webhook events are ingested and stored, but the worker only persists them; message/comment auto-reply for WhatsApp is not wired to the Cloud API send path yet
+- **Scheduled publishing & automation workflows** — `sync` / `posts` / `maintenance` queues are defined but only the `webhooks` and `messages` queues are consumed; scheduled post publishing and workflow runs are stored but not executed
+- **Delivery-status reconciliation** — outbound sends record `SENT`/`FAILED` but are not reconciled against provider delivery callbacks
 
 ## Database and Queue Notes
 
 - Prisma schema at `backend_js/prisma/schema.prisma` targets MySQL
 - Schema sync: `npx prisma db push` (no migration history committed yet)
 - BullMQ uses Redis as the queue broker (7 queues defined, 3 attempts, exponential backoff)
+- **Consumed queues**: `webhooks` (event ingestion) and `messages` (debounced auto-reply) — run `npm run worker` in `backend_js/`
 - Multi-tenant through `accounts` + `memberships`, with `X-Account-ID` request context
 - Schema includes tables for AI config, billing/subscriptions, token wallets/ledger, RBAC (`roles`/`permissions`), and observability — used by the AI, billing, automation, observability, and reports routes
 
@@ -354,6 +372,12 @@ Optional:
 - `FACEBOOK_GRAPH_API_VERSION` (default `v23.0`)
 - `FACEBOOK_GRAPH_API_BASE_URL` (default `https://graph.facebook.com`)
 
+LLM provider (for AI auto-reply):
+
+- `GROQ_API_KEY` (recommended) or `GEMINI_API_KEY` / `OPENAI_API_KEY`
+- `LLM_DEFAULT_PROVIDER=groq|gemini|openai|internal`
+- `LLM_DEFAULT_MODEL` (defaults per provider: `llama-3.3-70b-versatile`, `gemini-2.5-flash`, `gpt-4o-mini`)
+
 Frontend flag:
 
 - `VITE_FACEBOOK_OAUTH_ENABLED=true`
@@ -362,9 +386,9 @@ Frontend flag:
 
 1. Add the Facebook Login product to your Meta app.
 2. Add the redirect URI from `FACEBOOK_OAUTH_REDIRECT_URI`.
-3. Configure the Page webhook callback URL as `http://localhost:8000/api/v1/webhooks/facebook-page` for local development.
+3. Configure the Page webhook callback URL as `http://localhost:8000/api/v1/webhooks/facebook-page` for local development (public tunnel required for Meta to reach it — e.g. ngrok).
 4. Use the connection verify token when setting up the webhook challenge.
-5. Subscribe the app to the Page fields needed for Messenger and comment/feed automation.
+5. Subscribe the app to the Page fields needed for Messenger and comment/feed automation (`messages`, `conversations`, `feed`, `mention`, `message_deliveries`, `message_reads`, `message_echoes`, `messaging_postbacks`, `messaging_optins`).
 
 ### Requested Facebook permissions
 
@@ -378,10 +402,11 @@ Frontend flag:
 ### Current provider-backed capabilities
 
 - Connect Facebook Pages through OAuth or manual Page-token flow
-- Verify and ingest Messenger + comment/feed webhook events (stored; processing queue needs a worker)
-- Read live Messenger conversations and send replies
-- Reply to comments
-- Publish Page feed posts
+- Verify and ingest Messenger + comment/feed webhook events — processed by the worker (auto-reply, comment moderation records)
+- Read live Messenger conversations and send replies (with typing indicators)
+- **Automated inbox replies** — worker generates one debounced, context-aware reply per message burst via the configured LLM provider
+- **Automated comment replies** — for posts with AI auto-reply enabled
+- Reply to comments manually and publish Page feed posts
 
 ## WhatsApp Integration Setup
 
@@ -403,7 +428,7 @@ Frontend flag:
 ### Current provider-backed capabilities
 
 - Connect WhatsApp phone numbers with account-scoped credentials
-- Verify and ingest WhatsApp webhook events (stored; processing queue needs a worker)
+- Verify and ingest WhatsApp webhook events (stored; processing queue needs a worker — WhatsApp auto-reply not yet wired)
 - Sync connection metadata and expose troubleshooting-friendly connection summary
 - Cloud API client supports profile lookup and text-message sending (not yet exposed via inbox routes)
 
@@ -429,7 +454,7 @@ Services:
 - MySQL: `localhost:3306` (db `automation`, user `app` / password `app`)
 - Redis: `localhost:6379`
 
-The worker/beat services in `docker-compose.yml` are commented out until a BullMQ worker is implemented.
+The worker service in `docker-compose.yml` is commented out — uncomment it (or run `cd backend_js && npm run worker` locally) to enable automated replies. Without the worker, webhook events are still ingested and stored but never processed.
 
 ### 3. Sync the database schema
 
@@ -462,6 +487,7 @@ curl http://localhost:8000/api/v1/health
 
 1. `http://localhost:5173/inbox` — review threads for the active account (Facebook Live inbox requires a connected Facebook Page).
 2. Filter by status, view messages, set the AI-chat mode, and send replies.
+3. **Auto-reply**: with the worker running and the conversation in `auto` mode, message the page from Messenger — the bot answers one debounced, context-aware reply per burst (~6s after the last message). Use the frontend pause button to stop auto-replies (manual mode) or set `off` to disable per conversation.
 
 ### 8. Try the comments moderation flow
 
@@ -483,6 +509,7 @@ npm install
 npx prisma generate
 npx prisma db push
 npm run dev        # tsx watch
+npm run worker     # separate process: webhook ingestion + debounced AI auto-reply
 ```
 
 Production-style run:
@@ -524,11 +551,12 @@ make docker-down
 - Production settings validation rejects: debug enabled, placeholder `SECRET_KEY`, wildcard `ALLOWED_HOSTS`/`CORS_ORIGINS`, and the default owner password
 - `DATABASE_URL` and `REDIS_URL` can override composed connection settings for hosted environments
 - Rate limiting is not enforced yet, but settings and CORS/response structure are in place
-- Secrets to rotate before production: `SECRET_KEY`, `MYSQL_PASSWORD`, `FACEBOOK_APP_SECRET`, `OPENAI_API_KEY`
+- Secrets to rotate before production: `SECRET_KEY`, `MYSQL_PASSWORD`, `FACEBOOK_APP_SECRET`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`
 
 ## Next Milestones
 
-- Implement a BullMQ worker to process webhook events, AI reply generation, scheduled publishing, automation workflow runs, and delivery retries
+- Wire WhatsApp auto-reply into the worker (Cloud API send path)
+- Consume `sync` / `posts` / `maintenance` queues for scheduled publishing, automation workflow runs, and delivery retries
 - Real provider-backed LLM pricing and token reconciliation
 - Delivery status reconciliation and retry policies for Facebook/WhatsApp outbound sends
 - Media attachment support for Messenger and Page publishing
@@ -537,6 +565,6 @@ make docker-down
 
 ## External Dependency TODOs
 
-- OpenAI provider execution requires real credentials and provider wiring
+- LLM providers require real API keys in `.env` (`GROQ_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY`) and the `LLM_DEFAULT_PROVIDER` choice; without them the deterministic internal fallback replies
 - Production secret/key management should replace the local token encryption helper
 - Live Meta app configuration and approved permissions are required for real production Facebook/WhatsApp traffic

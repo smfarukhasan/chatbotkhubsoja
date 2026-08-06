@@ -330,20 +330,6 @@ inboxRouter.post('/conversations/:id/reply', requireUser, async (req: Authentica
       throw new NotFoundError('Conversation not found.');
     }
 
-    const pauseUntil = new Date(Date.now() + 15 * 60 * 1000);
-    await prisma.conversations.update({
-      where: { id: conversationId },
-      data: {
-        metadata_json: {
-          ...(conversation.metadata_json as any || {}),
-          ai_chat: {
-            mode: 'manual',
-            manual_until: pauseUntil.toISOString(),
-          },
-        },
-      },
-    });
-
     const msg = await prisma.messages.create({
       data: {
         account_id: accountId,

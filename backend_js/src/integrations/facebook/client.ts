@@ -147,7 +147,22 @@ export class FacebookGraphAPIClient {
   }
 
   async subscribePageToApp(pageId: string, accessToken: string): Promise<any> {
-    return this.request('POST', `/${pageId}/subscribed_apps`, { accessToken });
+    return this.request('POST', `/${pageId}/subscribed_apps`, {
+      accessToken,
+      data: {
+        subscribed_fields: [
+          'messages',
+          'conversations',
+          'feed',
+          'mention',
+          'message_deliveries',
+          'message_reads',
+          'message_echoes',
+          'messaging_postbacks',
+          'messaging_optins',
+        ].join(','),
+      },
+    });
   }
 
   async getPageSubscriptions(pageId: string, accessToken: string): Promise<any> {
@@ -161,6 +176,16 @@ export class FacebookGraphAPIClient {
         recipient: { id: recipientId },
         messaging_type: 'RESPONSE',
         message: { text },
+      },
+    });
+  }
+
+  async sendTypingIndicator(pageAccessToken: string, recipientId: string, action: 'typing_on' | 'typing_off'): Promise<any> {
+    return this.request('POST', '/me/messages', {
+      accessToken: pageAccessToken,
+      data: {
+        recipient: { id: recipientId },
+        sender_action: action,
       },
     });
   }

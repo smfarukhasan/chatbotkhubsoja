@@ -94,9 +94,9 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 - `POST /comment-reply` — same pattern for comments; `send_now` publishes via Graph API, updates comment to `replied`, stores `facebook_comment_replies` row; `persist_draft` writes `ai_draft_reply` on the comment
 - `POST /post` — generates post content (`POST_GENERATION`); `persist_draft` creates/updates a `social_posts` draft (`is_llm_generated`, `requires_approval`)
 - Every completion logs to `llm_token_usage` and `action_usage_logs` (tokens + estimated cost)
-- Backed by `src/services/llm_service.ts`: OpenAI provider when `LLM_DEFAULT_PROVIDER=openai` + `OPENAI_API_KEY` set, otherwise a deterministic internal fallback (`internal-reply-model-v1`) with FAQ keyword matching; cost estimate recorded per call
+- Backed by `src/services/llm_service.ts`: provider chain `openai` → `groq` → `gemini` → deterministic internal fallback (`internal-reply-model-v1`) with FAQ keyword matching; selected via `LLM_DEFAULT_PROVIDER` + `LLM_DEFAULT_MODEL` (default `groq` / `llama-3.3-70b-versatile`); Gemini calls retry on 429 (free-tier quota); provider failures are logged, never silent; cost estimate recorded per call
 - Generation context also injects **top-3 style examples** (`findStyleExamples`, keyword-overlap scoring with the Bengali-aware tokenizer, mirroring FAQ matching) with a "match this tone of voice" instruction — RAG-style retrieval so token cost stays flat regardless of how many conversations were trained
-- Intent classification runs before generation: `evaluateCustomerIntent` (OpenAI strict-JSON at temperature 0, validated, with a deterministic Bangla/English keyword-heuristic fallback whose confidence derives from the top-category score margin); the `INTENT_POLICY` prompt resolves with the standard precedence and a safe default policy applies until the owner configures one
+- Intent classification runs before generation: `evaluateCustomerIntent` (LLM strict-JSON at temperature 0, validated, with a deterministic Bangla/English keyword-heuristic fallback whose confidence derives from the top-category score margin); the `INTENT_POLICY` prompt resolves with the standard precedence and a safe default policy applies until the owner configures one
 
 ### Billing (`/billing`)
 - Plans: `GET /plans`, `GET /features` (feature catalog)
@@ -123,12 +123,16 @@ The repo README describes a larger Python/FastAPI backend (packed as `backend.zi
 ## Infrastructure
 
 - BullMQ queues defined for `default`, `webhooks`, `sync`, `maintenance`, `messages`, `comments`, `posts` (3 attempts, exponential backoff)
+- **Worker process** (`src/workers/processor.ts` + `start.ts`, `npm run worker`): consumes the `webhooks` queue (event ingestion → conversation/message/comment persistence) and the `messages` queue (debounced AI auto-reply)
+- Auto-reply behavior: 6s debounce per burst (stale jobs skipped), 4s regeneration window if new text arrives during LLM generation (max 3 regenerations), per-conversation Redis lock, echo-event filtering, typing indicator while generating, one unified reply per burst; no automatic pause after sends (pause is frontend-button only via `ai-chat` PATCH)
 - Request-ID + process-time logging middleware
 - Centralized error handler with a standardized error envelope
 - Express app: Helmet (CSP in production), CORS, gzip compression, 10 MB JSON body limit with raw-body capture (for webhook signature verification)
 
 ## Gaps vs. README / Python Version (not implemented in `backend_js`)
 
-- **No worker process** — only BullMQ queue definitions exist; nothing consumes them, so queued webhook events and automation `sync_jobs` are stored but never processed (no AI reply generation in background, no scheduled publishing, no delivery retries). AI generation currently runs synchronously inside the `/ai/generation/*` request handlers.
+- **WhatsApp auto-reply** — WhatsApp webhook events are ingested and stored by the worker but not processed into Cloud API sends
+- **Scheduled publishing & automation runs** — `sync` / `posts` / `maintenance` queues are defined but not consumed; scheduled post publishing and workflow runs are stored but not executed
+- **Delivery-status reconciliation** — outbound sends record `SENT`/`FAILED` but are not reconciled against provider delivery callbacks
 
 > Note: the AI, billing, automation, observability, and reports routes were added on 2026-08-04 (commit `d7e66fa`) — the frontend API layers (`aiApi`, `billingApi`, `automationApi`, `observabilityApi`, `reportApi`) now map 1:1 onto mounted backend routes. Conversation style training was added the same day (`POST /ai/knowledge-sources/from-conversations`, `findStyleExamples` retrieval, frontend `/ai/style` page), followed by customer intent evaluation (`INTENT_POLICY` prompt type, `evaluateCustomerIntent`, `/ai/generation/evaluate-intent`) and the product catalog (`/products` CRUD + `POST /upload-image` + `findProducts` RAG retrieval, frontend `/products` page).

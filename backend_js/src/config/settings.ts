@@ -76,6 +76,8 @@ const baseSchema = z.object({
   whatsapp_verify_signature: z.preprocess(parseBool, z.boolean().default(true)),
 
   openai_api_key: z.string().default(''),
+  gemini_api_key: z.string().default(''),
+  groq_api_key: z.string().default(''),
   llm_default_provider: z.string().default('internal'),
   llm_default_model: z.string().default('internal-reply-model-v1'),
   public_base_url: z.string().default(''),
@@ -158,6 +160,8 @@ export class SafeSettings {
   get whatsapp_graph_api_version() { return this.config.whatsapp_graph_api_version; }
   get whatsapp_verify_signature() { return this.config.whatsapp_verify_signature; }
   get openai_api_key() { return this.config.openai_api_key; }
+  get gemini_api_key() { return this.config.gemini_api_key; }
+  get groq_api_key() { return this.config.groq_api_key; }
   get llm_default_provider() { return this.config.llm_default_provider; }
   get llm_default_model() { return this.config.llm_default_model; }
   get public_base_url() { return this.config.public_base_url; }
@@ -174,6 +178,8 @@ export class SafeSettings {
     delete (dumped as any).redis_url;
     delete (dumped as any).facebook_app_secret;
     delete (dumped as any).openai_api_key;
+    delete (dumped as any).gemini_api_key;
+    delete (dumped as any).groq_api_key;
     delete (dumped as any).owner_password;
     return dumped;
   }

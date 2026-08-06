@@ -138,7 +138,7 @@ export class FacebookIntegrationService {
     try {
       const subscriptions = await this.client.getPageSubscriptions(pageId, pageToken);
       const isSubscribed = (subscriptions.data || []).some(
-        (sub: any) => sub.active === true && String(sub.id) === String(settings.facebook_app_id)
+        (sub: any) => String(sub.id) === String(settings.facebook_app_id) && (sub.subscribed_fields?.length ?? 0) > 0
       );
       webhookSubscriptionState = isSubscribed ? 'subscribed' : 'not_subscribed';
     } catch {
